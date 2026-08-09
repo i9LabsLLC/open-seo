@@ -116,24 +116,6 @@ function registerOpenSeoTool<Input extends ToolSchema>(
       );
     },
   );
-  server.registerTool(
-    getIndexNowKeyTool.name,
-    getIndexNowKeyTool.config,
-    instrumentMcpToolHandler(
-      getIndexNowKeyTool.name,
-      getIndexNowKeyTool.config.outputSchema,
-      getIndexNowKeyTool.handler,
-    ),
-  );
-  server.registerTool(
-    submitUrlsIndexNowTool.name,
-    submitUrlsIndexNowTool.config,
-    instrumentMcpToolHandler(
-      submitUrlsIndexNowTool.name,
-      submitUrlsIndexNowTool.config.outputSchema,
-      submitUrlsIndexNowTool.handler,
-    ),
-  );
 }
 
 export function createOpenSeoMcpServer(authProps: McpProps) {
@@ -202,6 +184,8 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
   register(getAuditStatusTool);
   register(getAuditIssuesTool);
   register(getAuditPagesTool);
+  register(getIndexNowKeyTool);
+  register(submitUrlsIndexNowTool);
 
   return server;
 }
