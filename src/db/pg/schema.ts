@@ -6,4 +6,5 @@ export * from "./billing.schema";
 export * from "./ga4.schema";
 export * from "./gsc.schema";
 export * from "./indexnow.schema";
+export * from "./bing.schema";
 export * from "./telemetry.schema";

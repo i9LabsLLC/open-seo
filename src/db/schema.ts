@@ -7,6 +7,7 @@ import * as sqliteBilling from "./billing.schema";
 import * as sqliteGa4 from "./ga4.schema";
 import * as sqliteGsc from "./gsc.schema";
 import * as sqliteIndexNow from "./indexnow.schema";
+import * as sqliteBing from "./bing.schema";
 import * as sqliteTelemetry from "./telemetry.schema";
 import * as pgApp from "./pg/app.schema";
 import * as pgAudit from "./pg/audit.schema";
@@ -16,6 +17,7 @@ import * as pgBilling from "./pg/billing.schema";
 import * as pgGa4 from "./pg/ga4.schema";
 import * as pgGsc from "./pg/gsc.schema";
 import * as pgIndexNow from "./pg/indexnow.schema";
+import * as pgBing from "./pg/bing.schema";
 import * as pgTelemetry from "./pg/telemetry.schema";
 
 // Canonical schema barrel. Repositories import their tables from here and the
@@ -36,6 +38,7 @@ type AppSchema = typeof sqliteApp &
   typeof sqliteGa4 &
   typeof sqliteGsc &
   typeof sqliteIndexNow &
+  typeof sqliteBing &
   typeof sqliteTelemetry;
 
 const runtimeSchema =
@@ -49,6 +52,7 @@ const runtimeSchema =
         ...pgGa4,
         ...pgGsc,
         ...pgIndexNow,
+        ...pgBing,
         ...pgTelemetry,
       }
     : {
@@ -60,6 +64,7 @@ const runtimeSchema =
         ...sqliteGa4,
         ...sqliteGsc,
         ...sqliteIndexNow,
+        ...sqliteBing,
         ...sqliteTelemetry,
       };
 
@@ -99,5 +104,6 @@ export const {
   gscConnections,
   indexnowConfigs,
   indexingEvents,
+  bingConnections,
   telemetryState,
 } = schema;

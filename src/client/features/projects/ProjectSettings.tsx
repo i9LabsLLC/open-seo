@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
 import { SearchConsoleConnectionCard } from "@/client/features/gsc/SearchConsoleConnectionCard";
 import { GoogleAnalyticsConnectionCard } from "@/client/features/ga4/GoogleAnalyticsConnectionCard";
+import { BingConnectionCard } from "@/client/features/bing/BingConnectionCard";
 import { IndexNowCard } from "@/client/features/projects/IndexNowCard";
 import { ProjectMarketFields } from "@/client/features/projects/ProjectMarketFields";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
@@ -66,6 +67,13 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
       <section id="google-analytics" className="space-y-3 scroll-mt-6">
         <h2 className="text-sm font-medium text-base-content/50">Analytics</h2>
         <GoogleAnalyticsConnectionCard projectId={projectId} />
+      </section>
+
+      <section id="bing" className="space-y-3 scroll-mt-6">
+        <h2 className="text-sm font-medium text-base-content/50">
+          Bing Webmaster
+        </h2>
+        <BingConnectionCard projectId={projectId} />
       </section>
 
       <section id="indexnow" className="space-y-3 scroll-mt-6">

@@ -58,6 +58,10 @@ import {
   runSiteAuditTool,
 } from "@/server/mcp/tools/site-audit-tools";
 import {
+  getBingCrawlIssuesTool,
+  getBingVisibilityTool,
+} from "@/server/mcp/tools/bing-tools";
+import {
   getIndexNowKeyTool,
   getIndexingHistoryTool,
   submitUrlsIndexNowTool,
@@ -190,6 +194,8 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
   register(verifyIndexNowKeyTool);
   register(submitUrlsIndexNowTool);
   register(getIndexingHistoryTool);
+  register(getBingVisibilityTool);
+  register(getBingCrawlIssuesTool);
 
   return server;
 }
