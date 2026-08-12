@@ -33,6 +33,8 @@ Try OpenSEO for free on our website. If you want to support the project, a hoste
 - Backlinks
 - Site Audits
 - AI Visibility
+- Indexing — push URLs to Bing/Yandex with [IndexNow](./docs/INDEXNOW.md), and read
+  visibility and crawl issues from [Bing Webmaster](./docs/BING_WEBMASTER.md)
 
 ## OpenSEO MCP & Agent Skills
 

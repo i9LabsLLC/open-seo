@@ -22,6 +22,7 @@ import { Route as AuthenticatedSubscribeRouteImport } from './routes/_authentica
 import { Route as AuthenticatedOauthConsentRouteImport } from './routes/_authenticated.oauth-consent'
 import { Route as AuthSignUpRouteImport } from './routes/_auth.sign-up'
 import { Route as AuthSignInRouteImport } from './routes/_auth.sign-in'
+import { Route as AppWarRoomRouteImport } from './routes/_app/war-room'
 import { Route as AppSupportRouteImport } from './routes/_app/support'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppProjectsRouteImport } from './routes/_app/projects'
@@ -118,6 +119,11 @@ const AuthSignInRoute = AuthSignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
   getParentRoute: () => AuthRoute,
+} as any)
+const AppWarRoomRoute = AppWarRoomRouteImport.update({
+  id: '/war-room',
+  path: '/war-room',
+  getParentRoute: () => AppRouteRoute,
 } as any)
 const AppSupportRoute = AppSupportRouteImport.update({
   id: '/support',
@@ -317,6 +323,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof AppProjectsRoute
   '/settings': typeof AppSettingsRoute
   '/support': typeof AppSupportRoute
+  '/war-room': typeof AppWarRoomRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
   '/oauth-consent': typeof AuthenticatedOauthConsentRoute
@@ -362,6 +369,7 @@ export interface FileRoutesByTo {
   '/projects': typeof AppProjectsRoute
   '/settings': typeof AppSettingsRoute
   '/support': typeof AppSupportRoute
+  '/war-room': typeof AppWarRoomRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
   '/oauth-consent': typeof AuthenticatedOauthConsentRoute
@@ -408,6 +416,7 @@ export interface FileRoutesById {
   '/_app/projects': typeof AppProjectsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/support': typeof AppSupportRoute
+  '/_app/war-room': typeof AppWarRoomRoute
   '/_auth/sign-in': typeof AuthSignInRoute
   '/_auth/sign-up': typeof AuthSignUpRoute
   '/_authenticated/oauth-consent': typeof AuthenticatedOauthConsentRoute
@@ -456,6 +465,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/settings'
     | '/support'
+    | '/war-room'
     | '/sign-in'
     | '/sign-up'
     | '/oauth-consent'
@@ -501,6 +511,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/settings'
     | '/support'
+    | '/war-room'
     | '/sign-in'
     | '/sign-up'
     | '/oauth-consent'
@@ -546,6 +557,7 @@ export interface FileRouteTypes {
     | '/_app/projects'
     | '/_app/settings'
     | '/_app/support'
+    | '/_app/war-room'
     | '/_auth/sign-in'
     | '/_auth/sign-up'
     | '/_authenticated/oauth-consent'
@@ -692,6 +704,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/sign-in'
       preLoaderRoute: typeof AuthSignInRouteImport
       parentRoute: typeof AuthRoute
+    }
+    '/_app/war-room': {
+      id: '/_app/war-room'
+      path: '/war-room'
+      fullPath: '/war-room'
+      preLoaderRoute: typeof AppWarRoomRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/_app/support': {
       id: '/_app/support'
@@ -940,6 +959,7 @@ interface AppRouteRouteChildren {
   AppProjectsRoute: typeof AppProjectsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSupportRoute: typeof AppSupportRoute
+  AppWarRoomRoute: typeof AppWarRoomRoute
   AppIndexRoute: typeof AppIndexRoute
   AppHelpDataforseoApiKeyRoute: typeof AppHelpDataforseoApiKeyRoute
   AppHelpOpenrouterApiKeyRoute: typeof AppHelpOpenrouterApiKeyRoute
@@ -951,6 +971,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppProjectsRoute: AppProjectsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSupportRoute: AppSupportRoute,
+  AppWarRoomRoute: AppWarRoomRoute,
   AppIndexRoute: AppIndexRoute,
   AppHelpDataforseoApiKeyRoute: AppHelpDataforseoApiKeyRoute,
   AppHelpOpenrouterApiKeyRoute: AppHelpOpenrouterApiKeyRoute,
