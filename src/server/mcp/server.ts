@@ -59,7 +59,9 @@ import {
 } from "@/server/mcp/tools/site-audit-tools";
 import {
   getIndexNowKeyTool,
+  getIndexingHistoryTool,
   submitUrlsIndexNowTool,
+  verifyIndexNowKeyTool,
 } from "@/server/mcp/tools/indexnow-tools";
 import { whoamiTool } from "@/server/mcp/tools/whoami";
 
@@ -185,7 +187,9 @@ export function createOpenSeoMcpServer(authProps: McpProps) {
   register(getAuditIssuesTool);
   register(getAuditPagesTool);
   register(getIndexNowKeyTool);
+  register(verifyIndexNowKeyTool);
   register(submitUrlsIndexNowTool);
+  register(getIndexingHistoryTool);
 
   return server;
 }

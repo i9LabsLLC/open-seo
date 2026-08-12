@@ -1,19 +1,30 @@
 import * as React from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BadgeCheck, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { CopyButton } from "@/client/features/ai-mcp/SetupControls";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
 import {
-  generateProjectIndexNowKey,
-  setProjectIndexNowKey,
-} from "@/serverFunctions/projects";
+  generateIndexNowKey,
+  getIndexNowState,
+  removeIndexNowKey,
+  saveIndexNowKey,
+  setIndexNowEnabled,
+  verifyIndexNowKey,
+} from "@/serverFunctions/indexnow";
 import { INDEXNOW_KEY_RULE, isValidIndexNowKey } from "@/shared/indexnow";
 import type { ProjectSummary } from "./types";
 
+export const indexNowStateKey = (projectId: string) => [
+  "indexNowState",
+  projectId,
+];
+
 /**
- * IndexNow setup for a project. The key is not a secret — control of the host
- * is proven by serving `<key>.txt` at its root — so it is displayed in full,
- * and users can paste a key their site already publishes instead of adopting a
+ * IndexNow key management for a project. The key is not a secret — control of
+ * the host is proven by serving `<key>.txt` on it — so it is displayed in full,
+ * and users can adopt a key their site already publishes instead of a
  * generated one.
  */
 export function IndexNowCard({ project }: { project: ProjectSummary }) {
@@ -21,8 +32,20 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
   const [pastedKey, setPastedKey] = React.useState("");
   const [replacing, setReplacing] = React.useState(false);
 
-  const onSettled = async (message: string) => {
-    await queryClient.invalidateQueries({ queryKey: ["projects"] });
+  const stateQuery = useQuery({
+    queryKey: indexNowStateKey(project.id),
+    queryFn: () => getIndexNowState({ data: { projectId: project.id } }),
+    enabled: Boolean(project.domain),
+  });
+
+  const refresh = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: indexNowStateKey(project.id),
+    });
+  };
+
+  const settle = async (message: string) => {
+    await refresh();
     setPastedKey("");
     setReplacing(false);
     toast.success(message);
@@ -30,27 +53,54 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
 
   const saveMutation = useMutation({
     mutationFn: (key: string) =>
-      setProjectIndexNowKey({ data: { projectId: project.id, key } }),
-    onSuccess: (_result, key) =>
-      onSettled(key ? "IndexNow key saved" : "IndexNow key removed"),
+      saveIndexNowKey({ data: { projectId: project.id, key } }),
+    onSuccess: () => settle("IndexNow key saved"),
     onError: (error) =>
       toast.error(getStandardErrorMessage(error, "Failed to save the key")),
   });
 
   const generateMutation = useMutation({
-    mutationFn: () =>
-      generateProjectIndexNowKey({ data: { projectId: project.id } }),
-    onSuccess: () => onSettled("IndexNow key generated"),
+    mutationFn: () => generateIndexNowKey({ data: { projectId: project.id } }),
+    onSuccess: () => settle("IndexNow key generated"),
     onError: (error) =>
       toast.error(getStandardErrorMessage(error, "Failed to generate a key")),
   });
 
-  const busy = saveMutation.isPending || generateMutation.isPending;
+  const removeMutation = useMutation({
+    mutationFn: () => removeIndexNowKey({ data: { projectId: project.id } }),
+    onSuccess: () => settle("IndexNow key removed"),
+    onError: (error) =>
+      toast.error(getStandardErrorMessage(error, "Failed to remove the key")),
+  });
+
+  const enabledMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      setIndexNowEnabled({ data: { projectId: project.id, enabled } }),
+    onSuccess: async (_result, enabled) => {
+      await refresh();
+      toast.success(enabled ? "IndexNow resumed" : "IndexNow paused");
+    },
+    onError: (error) => toast.error(getStandardErrorMessage(error)),
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: () => verifyIndexNowKey({ data: { projectId: project.id } }),
+    onSuccess: async (result) => {
+      await refresh();
+      if (result.verified) toast.success(result.detail);
+      else toast.error(result.detail);
+    },
+    onError: (error) =>
+      toast.error(getStandardErrorMessage(error, "Could not check the file")),
+  });
+
+  const busy =
+    saveMutation.isPending ||
+    generateMutation.isPending ||
+    removeMutation.isPending ||
+    enabledMutation.isPending;
   const keyIsValid = isValidIndexNowKey(pastedKey.trim());
-  const key = project.indexNowKey;
-  const keyLocation = project.domain
-    ? `https://${project.domain}/${key}.txt`
-    : null;
+  const setup = stateQuery.data?.setup ?? null;
 
   if (!project.domain) {
     return (
@@ -58,6 +108,10 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
         Add a domain above to set up IndexNow.
       </p>
     );
+  }
+
+  if (stateQuery.isPending) {
+    return <span className="loading loading-spinner loading-sm" />;
   }
 
   return (
@@ -68,15 +122,15 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
         not participate.
       </p>
 
-      {key && !replacing ? (
+      {setup && !replacing ? (
         <div className="space-y-4">
           <div className="space-y-1.5">
             <span className="text-sm font-medium">Key</span>
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 overflow-x-auto rounded-md border border-base-300 bg-base-200 px-3 py-2 font-mono text-xs">
-                {key}
+                {setup.key}
               </code>
-              <CopyButton value={key} successMessage="Key copied" />
+              <CopyButton value={setup.key} successMessage="Key copied" />
             </div>
           </div>
 
@@ -84,42 +138,89 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
             <span className="text-sm font-medium">Verification file</span>
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 overflow-x-auto rounded-md border border-base-300 bg-base-200 px-3 py-2 font-mono text-xs">
-                {keyLocation}
+                {setup.keyLocation}
               </code>
               <CopyButton
-                value={keyLocation ?? ""}
+                value={setup.keyLocation}
                 successMessage="URL copied"
               />
             </div>
-            <p className="text-xs text-base-content/50">
-              Host a plain-text file at that URL whose entire contents are the
-              key above. Until it resolves, engines reject submissions with HTTP
-              403.
-            </p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {setup.lastVerifiedAt ? (
+                <span className="inline-flex items-center gap-1 text-xs text-success">
+                  <BadgeCheck className="size-3.5" />
+                  Live as of {new Date(setup.lastVerifiedAt).toLocaleString()}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs text-base-content/50">
+                  <ShieldAlert className="size-3.5" />
+                  Not checked yet — engines reject submissions with HTTP 403
+                  until this file is live.
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs"
+                onClick={() => verifyMutation.mutate()}
+                disabled={verifyMutation.isPending || busy}
+              >
+                {verifyMutation.isPending ? "Checking…" : "Check now"}
+              </button>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={() => saveMutation.mutate("")}
-              disabled={busy}
-            >
-              Remove
-            </button>
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              onClick={() => setReplacing(true)}
-              disabled={busy}
-            >
-              Replace key
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="toggle toggle-sm"
+                checked={setup.enabled}
+                onChange={(event) =>
+                  enabledMutation.mutate(event.target.checked)
+                }
+                disabled={busy}
+              />
+              <span>
+                {setup.enabled
+                  ? "Submissions enabled"
+                  : "Paused — submissions are refused"}
+              </span>
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => removeMutation.mutate()}
+                disabled={busy}
+              >
+                Remove
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => setReplacing(true)}
+                disabled={busy}
+              >
+                Replace key
+              </button>
+            </div>
           </div>
+
+          <p className="text-sm text-base-content/60">
+            Submit URLs and review past submissions on the{" "}
+            <Link
+              to="/p/$projectId/indexing"
+              params={{ projectId: project.id }}
+              className="link link-hover font-medium"
+            >
+              Indexing page
+            </Link>
+            .
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {key ? (
+          {setup ? (
             <p className="text-sm text-base-content/70">
               Replacing the key invalidates the file you already published —
               you&apos;ll need to publish the new one before submitting URLs
@@ -163,7 +264,7 @@ export function IndexNowCard({ project }: { project: ProjectSummary }) {
               Or let OpenSEO generate one for you.
             </p>
             <div className="flex gap-2">
-              {key ? (
+              {setup ? (
                 <button
                   type="button"
                   className="btn btn-ghost btn-sm"

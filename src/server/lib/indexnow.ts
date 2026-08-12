@@ -3,11 +3,13 @@
 //
 // IndexNow keys are not secrets: control of a host is proven by serving
 // `<key>.txt` (containing the key) at the host root. The key is stored per
-// project (projects.indexnow_key) so a site that already publishes a key file —
-// from another tool, or a previous OpenSEO install — can keep using it instead
-// of having to republish a file OpenSEO picked.
+// project so a site that already publishes a key file — from another tool, or
+// an earlier install — can keep using it instead of republishing one we picked.
 
-const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
+import {
+  INDEXNOW_ENDPOINT,
+  INDEXNOW_MAX_URLS_PER_SUBMISSION,
+} from "@/shared/indexnow";
 
 // Bare host from a stored project domain (tolerates a scheme/path/trailing
 // slash if one slipped in). Returns null when there's nothing usable.
@@ -29,11 +31,34 @@ export function generateIndexNowKey(): string {
     .join("");
 }
 
-export function indexNowKeyLocation(host: string, key: string): string {
+export function defaultIndexNowKeyLocation(host: string, key: string): string {
   return `https://${host}/${key}.txt`;
 }
 
-// URLs must all belong to the host (IndexNow rejects cross-host lists).
+/**
+ * A custom key location is only meaningful — and only safe to fetch — when it
+ * is HTTPS on the project's own host. The protocol requires the same host, and
+ * without that check "verify" would fetch any URL the user typed, turning the
+ * verify button into a server-side request forgery primitive.
+ */
+export function isKeyLocationOnHost(
+  keyLocation: string,
+  host: string,
+): boolean {
+  try {
+    const url = new URL(keyLocation);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      url.host.toLowerCase() === host.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** URLs must all belong to the host (IndexNow rejects cross-host lists). */
 export function partitionUrlsByHost(
   urls: string[],
   host: string,
@@ -56,19 +81,31 @@ export function partitionUrlsByHost(
   return { matching, mismatched };
 }
 
-type IndexNowSubmitResult = {
-  submitted: number;
+type IndexNowBatchResult = {
   status: number;
   ok: boolean;
-  endpoint: string;
+  body: string;
 };
 
-export async function submitToIndexNow(input: {
+/**
+ * POSTs one batch and reports the engine's status as data. A non-2xx is not an
+ * exception: the request was well formed and the engine simply declined it —
+ * most often 403 because the key file isn't published yet — which callers and
+ * agents need to see rather than have raised as a failure. Network failures
+ * still throw, since there is no status to report.
+ */
+export async function submitIndexNowBatch(input: {
   host: string;
   key: string;
   keyLocation: string;
   urlList: string[];
-}): Promise<IndexNowSubmitResult> {
+}): Promise<IndexNowBatchResult> {
+  if (input.urlList.length > INDEXNOW_MAX_URLS_PER_SUBMISSION) {
+    throw new Error(
+      `IndexNow accepts at most ${INDEXNOW_MAX_URLS_PER_SUBMISSION} URLs per request.`,
+    );
+  }
+
   const response = await fetch(INDEXNOW_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -79,11 +116,12 @@ export async function submitToIndexNow(input: {
       urlList: input.urlList,
     }),
   });
+  const body = await response.text().catch(() => "");
+
   return {
-    submitted: input.urlList.length,
     status: response.status,
     // 200 = accepted; 202 = accepted, key validation pending.
     ok: response.status === 200 || response.status === 202,
-    endpoint: INDEXNOW_ENDPOINT,
+    body,
   };
 }
