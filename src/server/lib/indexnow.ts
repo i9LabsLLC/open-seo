@@ -2,9 +2,10 @@
 // Bing, Yandex, and other participating engines within seconds, for free.
 //
 // IndexNow keys are not secrets: control of a host is proven by serving
-// `<key>.txt` (containing the key) at the host root. A key derived
-// deterministically from the project id is therefore safe, stable across
-// restarts, and needs no storage — the only per-project state IndexNow needs.
+// `<key>.txt` (containing the key) at the host root. The key is stored per
+// project (projects.indexnow_key) so a site that already publishes a key file —
+// from another tool, or a previous OpenSEO install — can keep using it instead
+// of having to republish a file OpenSEO picked.
 
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 
@@ -19,15 +20,13 @@ export function indexNowHostFromDomain(
   return host ? host : null;
 }
 
-// 32 hex chars derived from the project id. Deterministic (SHA-256), so the
-// same project always yields the same key and hosted `<key>.txt` stays valid.
-export async function deriveIndexNowKey(projectId: string): Promise<string> {
-  const bytes = new TextEncoder().encode(`indexnow:${projectId}`);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest))
+// A fresh 32-hex-char key. Regenerating invalidates the published file, so the
+// UI warns before replacing an existing key.
+export function generateIndexNowKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-    .slice(0, 32);
+    .join("");
 }
 
 export function indexNowKeyLocation(host: string, key: string): string {
@@ -57,7 +56,7 @@ export function partitionUrlsByHost(
   return { matching, mismatched };
 }
 
-export type IndexNowSubmitResult = {
+type IndexNowSubmitResult = {
   submitted: number;
   status: number;
   ok: boolean;

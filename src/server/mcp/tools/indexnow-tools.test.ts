@@ -1,19 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { deriveIndexNowKey } from "@/server/lib/indexnow";
 import { makeToolContext } from "./tool-test-support";
+
+const STORED_KEY = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 
 const mocks = vi.hoisted(() => ({
   getProjectForOrganization: vi.fn(),
+  ensureProjectIndexNowKey: vi.fn(),
 }));
 
 vi.mock("@/server/features/projects/services/ProjectService", () => ({
   ProjectService: {
     getProjectForOrganization: mocks.getProjectForOrganization,
+    ensureProjectIndexNowKey: mocks.ensureProjectIndexNowKey,
   },
 }));
 
 const toolContext = makeToolContext();
+
+const project = (overrides: Record<string, unknown> = {}) => ({
+  id: "project_1",
+  name: "Acme",
+  domain: "acme.com",
+  locationCode: 2840,
+  languageCode: "en",
+  indexNowKey: STORED_KEY,
+  ...overrides,
+});
 
 const indexNowBodySchema = z.object({
   host: z.string(),
@@ -26,45 +39,60 @@ describe("IndexNow MCP tools", () => {
   beforeEach(() => {
     vi.resetModules();
     mocks.getProjectForOrganization.mockReset();
-    mocks.getProjectForOrganization.mockResolvedValue({
-      id: "project_1",
-      name: "Acme",
-      domain: "acme.com",
-      locationCode: 2840,
-      languageCode: "en",
-    });
+    mocks.ensureProjectIndexNowKey.mockReset();
+    mocks.getProjectForOrganization.mockResolvedValue(project());
+    mocks.ensureProjectIndexNowKey.mockResolvedValue(STORED_KEY);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("returns the deterministic key + verification file location", async () => {
+  it("returns the project's stored key + verification file location", async () => {
     const { getIndexNowKeyTool } = await import("./indexnow-tools");
-    const expectedKey = await deriveIndexNowKey("project_1");
 
     const result = await getIndexNowKeyTool.handler(
       { projectId: "project_1" },
       toolContext,
     );
 
-    expect(expectedKey).toMatch(/^[0-9a-f]{32}$/);
     expect(result.structuredContent).toMatchObject({
       host: "acme.com",
-      key: expectedKey,
-      keyFileContent: expectedKey,
-      keyLocation: `https://acme.com/${expectedKey}.txt`,
+      key: STORED_KEY,
+      keyFileContent: STORED_KEY,
+      keyLocation: `https://acme.com/${STORED_KEY}.txt`,
+    });
+  });
+
+  // The agent path has to work on a project that has never opened settings, so
+  // the tool hands the project to the service's provision-on-first-use path
+  // rather than reading the column itself.
+  it("returns the key the service provisions when the project has none", async () => {
+    mocks.getProjectForOrganization.mockResolvedValue(
+      project({ indexNowKey: null }),
+    );
+    mocks.ensureProjectIndexNowKey.mockResolvedValue("freshlygeneratedkey00");
+    const { getIndexNowKeyTool } = await import("./indexnow-tools");
+
+    const result = await getIndexNowKeyTool.handler(
+      { projectId: "project_1" },
+      toolContext,
+    );
+
+    expect(mocks.ensureProjectIndexNowKey).toHaveBeenCalledWith(
+      toolContext.auth.organizationId,
+      expect.objectContaining({ id: "project_1", indexNowKey: null }),
+    );
+    expect(result.structuredContent).toMatchObject({
+      key: "freshlygeneratedkey00",
+      keyLocation: "https://acme.com/freshlygeneratedkey00.txt",
     });
   });
 
   it("errors when the project has no domain", async () => {
-    mocks.getProjectForOrganization.mockResolvedValue({
-      id: "project_1",
-      name: "Acme",
-      domain: null,
-      locationCode: 2840,
-      languageCode: "en",
-    });
+    mocks.getProjectForOrganization.mockResolvedValue(
+      project({ domain: null }),
+    );
     const { getIndexNowKeyTool } = await import("./indexnow-tools");
 
     await expect(
@@ -82,7 +110,6 @@ describe("IndexNow MCP tools", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     const { submitUrlsIndexNowTool } = await import("./indexnow-tools");
-    const expectedKey = await deriveIndexNowKey("project_1");
 
     const result = await submitUrlsIndexNowTool.handler(
       {
@@ -101,8 +128,8 @@ describe("IndexNow MCP tools", () => {
     const body = indexNowBodySchema.parse(JSON.parse(capturedBody ?? "{}"));
     expect(body.host).toBe("acme.com");
     expect(body.urlList).toEqual(["https://acme.com/a", "https://acme.com/b"]);
-    expect(body.key).toBe(expectedKey);
-    expect(body.keyLocation).toBe(`https://acme.com/${expectedKey}.txt`);
+    expect(body.key).toBe(STORED_KEY);
+    expect(body.keyLocation).toBe(`https://acme.com/${STORED_KEY}.txt`);
 
     expect(result.structuredContent).toMatchObject({
       host: "acme.com",
@@ -145,6 +172,26 @@ describe("IndexNow MCP tools", () => {
       ok: scenario.ok,
     });
     expect(result.isError).toBeFalsy();
+  });
+
+  // Submitting must not provision a key: a key whose file was never published
+  // only earns a 403, so the agent is sent to set IndexNow up first.
+  it("errors without submitting when the project has no key", async () => {
+    mocks.getProjectForOrganization.mockResolvedValue(
+      project({ indexNowKey: null }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { submitUrlsIndexNowTool } = await import("./indexnow-tools");
+
+    await expect(
+      submitUrlsIndexNowTool.handler(
+        { projectId: "project_1", urls: ["https://acme.com/a"] },
+        toolContext,
+      ),
+    ).rejects.toThrow(/get_indexnow_key/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.ensureProjectIndexNowKey).not.toHaveBeenCalled();
   });
 
   it("errors when no submitted URL is on the project host", async () => {

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   restoreProject: vi.fn(),
   countProjects: vi.fn(),
   updateProjectMarket: vi.fn(),
+  updateProjectIndexNowKey: vi.fn(),
   getProjectForOrganization: vi.fn(),
   listProjects: vi.fn(),
   listArchivedProjects: vi.fn(),
@@ -32,11 +33,13 @@ const namedProject = {
   createdAt: "2026-05-20 12:00:00",
 };
 
+const resetRepositoryMocks = () => {
+  vi.resetModules();
+  for (const mock of Object.values(mocks)) mock.mockReset();
+};
+
 describe("project service", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    for (const mock of Object.values(mocks)) mock.mockReset();
-  });
+  beforeEach(resetRepositoryMocks);
 
   describe("listProjectsEnsuringOne", () => {
     it("returns existing projects without creating a Default", async () => {
@@ -345,5 +348,77 @@ describe("project service", () => {
         restoreProject("org_1", { archivedProjectId: "project_default" }),
       ).rejects.toMatchObject({ code: "CONFLICT" });
     });
+  });
+});
+
+// Its own top-level describe: the service suite above is already at the
+// max-lines-per-function ceiling.
+describe("project IndexNow key", () => {
+  beforeEach(resetRepositoryMocks);
+
+  it("rejects a key outside the protocol's character set before any write", async () => {
+    const { setProjectIndexNowKey } = await import("./projects");
+
+    await expect(
+      setProjectIndexNowKey("org_1", {
+        projectId: "project_acme",
+        key: "not a valid key!",
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(mocks.updateProjectIndexNowKey).not.toHaveBeenCalled();
+  });
+
+  it("clears the key when an empty value is saved", async () => {
+    mocks.updateProjectIndexNowKey.mockResolvedValue(namedProject);
+    const { setProjectIndexNowKey } = await import("./projects");
+
+    await setProjectIndexNowKey("org_1", {
+      projectId: "project_acme",
+      key: "",
+    });
+
+    expect(mocks.updateProjectIndexNowKey).toHaveBeenCalledWith(
+      "project_acme",
+      "org_1",
+      null,
+    );
+  });
+
+  it("generates a key the protocol accepts", async () => {
+    mocks.updateProjectIndexNowKey.mockResolvedValue(namedProject);
+    const { generateProjectIndexNowKey } = await import("./projects");
+
+    await generateProjectIndexNowKey("org_1", { projectId: "project_acme" });
+
+    expect(mocks.updateProjectIndexNowKey).toHaveBeenCalledWith(
+      "project_acme",
+      "org_1",
+      expect.stringMatching(/^[a-zA-Z0-9-]{8,128}$/),
+    );
+  });
+
+  it("provisions a key on first use and reuses it afterwards", async () => {
+    // get_indexnow_key must work without a settings visit, but must never
+    // replace a key whose verification file is already published.
+    mocks.updateProjectIndexNowKey.mockResolvedValue(namedProject);
+    const { ensureProjectIndexNowKey } = await import("./projects");
+
+    const provisioned = await ensureProjectIndexNowKey("org_1", {
+      id: "project_acme",
+      indexNowKey: null,
+    });
+    expect(mocks.updateProjectIndexNowKey).toHaveBeenCalledWith(
+      "project_acme",
+      "org_1",
+      provisioned,
+    );
+
+    await expect(
+      ensureProjectIndexNowKey("org_1", {
+        id: "project_acme",
+        indexNowKey: "existingkey123",
+      }),
+    ).resolves.toBe("existingkey123");
+    expect(mocks.updateProjectIndexNowKey).toHaveBeenCalledTimes(1);
   });
 });

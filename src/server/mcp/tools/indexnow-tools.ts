@@ -4,8 +4,8 @@ import { buildProjectMeta } from "@/server/mcp/context";
 import { optionalMetaOutputSchema } from "@/server/mcp/output-schemas";
 import { withMcpProjectAuth } from "@/server/mcp/project-auth";
 import { projectIdSchema } from "@/server/mcp/schemas";
+import { ProjectService } from "@/server/features/projects/services/ProjectService";
 import {
-  deriveIndexNowKey,
   indexNowHostFromDomain,
   indexNowKeyLocation,
   partitionUrlsByHost,
@@ -15,12 +15,15 @@ import {
 const DOMAIN_REQUIRED_MESSAGE =
   "This project has no domain set. Add a domain to the project first, then retry.";
 
+const KEY_REQUIRED_MESSAGE =
+  "This project has no IndexNow key yet. Call get_indexnow_key first (or generate one in project settings), publish the verification file, then retry.";
+
 export const getIndexNowKeyTool = {
   name: "get_indexnow_key",
   config: {
     title: "Get IndexNow key",
     description:
-      "Return the project's IndexNow key and the verification file to publish. Uses no credits. The key is derived deterministically from the project (stable across restarts). To activate IndexNow, host a file at the returned keyLocation whose entire contents are the key; then submit URLs with submit_urls_indexnow. Requires the project to have a domain.",
+      "Return the project's IndexNow key and the verification file to publish. Uses no credits. The key is stored on the project and shown in its settings; the first call generates one, later calls return that same key. To activate IndexNow, host a file at the returned keyLocation whose entire contents are the key; then submit URLs with submit_urls_indexnow. Requires the project to have a domain.",
     inputSchema: { projectId: projectIdSchema },
     outputSchema: {
       host: z.string(),
@@ -30,7 +33,10 @@ export const getIndexNowKeyTool = {
       ...optionalMetaOutputSchema,
     },
     annotations: {
-      readOnlyHint: true,
+      // Provisions the key on first call, so not strictly read-only — but it
+      // never replaces an existing one.
+      readOnlyHint: false,
+      idempotentHint: true,
       openWorldHint: false,
       destructiveHint: false,
     },
@@ -40,7 +46,10 @@ export const getIndexNowKeyTool = {
     if (!host) {
       throw new Error(DOMAIN_REQUIRED_MESSAGE);
     }
-    const key = await deriveIndexNowKey(context.project.id);
+    const key = await ProjectService.ensureProjectIndexNowKey(
+      context.auth.organizationId,
+      context.project,
+    );
     const keyLocation = indexNowKeyLocation(host, key);
     return mcpResponse({
       text: `IndexNow key for ${host}: ${key}\nPublish ${keyLocation} containing exactly:\n${key}\nThen call submit_urls_indexnow to notify Bing/Yandex.`,
@@ -60,7 +69,7 @@ export const submitUrlsIndexNowTool = {
   config: {
     title: "Submit URLs to IndexNow",
     description:
-      "Notify Bing, Yandex, and other IndexNow engines that URLs are new or updated — free, no DataForSEO credits, typically indexed within seconds. Google does NOT participate in IndexNow, so this does not affect Google indexing. All URLs must be on the project's domain (cross-host URLs are skipped and reported). The verification file from get_indexnow_key must already be published at the domain root, or engines will ignore the submission. The engine's HTTP status is returned as data (`status`, `ok`), not a tool error: 202 = accepted with key validation pending, 403 = key file not published yet.",
+      "Notify Bing, Yandex, and other IndexNow engines that URLs are new or updated — free, no DataForSEO credits, typically indexed within seconds. Google does NOT participate in IndexNow, so this does not affect Google indexing. All URLs must be on the project's domain (cross-host URLs are skipped and reported). The project needs an IndexNow key (call get_indexnow_key), and the verification file must already be published at the domain root, or engines will ignore the submission. The engine's HTTP status is returned as data (`status`, `ok`), not a tool error: 202 = accepted with key validation pending, 403 = key file not published yet.",
     inputSchema: {
       projectId: projectIdSchema,
       urls: z
@@ -92,13 +101,16 @@ export const submitUrlsIndexNowTool = {
       if (!host) {
         throw new Error(DOMAIN_REQUIRED_MESSAGE);
       }
+      const key = context.project.indexNowKey;
+      if (!key) {
+        throw new Error(KEY_REQUIRED_MESSAGE);
+      }
       const { matching, mismatched } = partitionUrlsByHost(args.urls, host);
       if (matching.length === 0) {
         throw new Error(
           `None of the submitted URLs are on ${host}. IndexNow only accepts URLs for the project's own host.`,
         );
       }
-      const key = await deriveIndexNowKey(context.project.id);
       const keyLocation = indexNowKeyLocation(host, key);
       const result = await submitToIndexNow({
         host,

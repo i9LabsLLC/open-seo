@@ -83,6 +83,18 @@ export const setProjectMarketSchema = z.object({
     .refine(isSupportedLanguageCode, "Unsupported language code"),
 });
 
+// IndexNow key for the project's domain. The empty string clears it; the
+// service validates the protocol's character set (letters, numbers, dashes)
+// so a pasted key fails at save time, not at the first submission.
+export const setProjectIndexNowKeySchema = z.object({
+  projectId: z.string().min(1),
+  key: z.string().trim().max(128),
+});
+
+export const generateProjectIndexNowKeySchema = z.object({
+  projectId: z.string().min(1),
+});
+
 export const archiveProjectSchema = z.object({
   projectId: z.string().min(1),
 });
@@ -98,5 +110,11 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type SetProjectDomainInput = z.infer<typeof setProjectDomainSchema>;
 export type SetProjectMarketInput = z.infer<typeof setProjectMarketSchema>;
+export type SetProjectIndexNowKeyInput = z.infer<
+  typeof setProjectIndexNowKeySchema
+>;
+export type GenerateProjectIndexNowKeyInput = z.infer<
+  typeof generateProjectIndexNowKeySchema
+>;
 export type ArchiveProjectInput = z.infer<typeof archiveProjectSchema>;
 export type RestoreProjectInput = z.infer<typeof restoreProjectSchema>;

@@ -54,6 +54,11 @@ export const projects = sqliteTable(
     // onboarding and reused by every project-scoped data call.
     locationCode: integer("location_code").notNull().default(2840),
     languageCode: text("language_code").notNull().default("en"),
+    // IndexNow verification key for the project's domain. Not a secret: host
+    // control is proven by serving `<key>.txt` at the domain root, so it is
+    // stored in the clear and shown in project settings. Null until the user
+    // (or the get_indexnow_key MCP tool) provisions one.
+    indexNowKey: text("indexnow_key"),
     createdAt: text("created_at")
       .notNull()
       .default(sql`(current_timestamp)`),

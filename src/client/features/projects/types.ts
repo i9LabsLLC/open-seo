@@ -10,5 +10,8 @@ export type ProjectSummary = {
   // Default market for the project's data calls.
   locationCode: number;
   languageCode: string;
+  // IndexNow verification key, null until one is generated or pasted. Public
+  // by design — it is published as `<key>.txt` on the project's domain.
+  indexNowKey: string | null;
   createdAt: string;
 };

@@ -153,6 +153,32 @@ async function updateProjectMarket(
   return row;
 }
 
+// Writes only the IndexNow key column, so saving a key never echoes a
+// name/domain/market the caller never edited. Null clears it.
+async function updateProjectIndexNowKey(
+  projectId: string,
+  organizationId: string,
+  indexNowKey: string | null,
+) {
+  const [row] = await db
+    .update(projects)
+    .set({ indexNowKey })
+    .where(
+      and(
+        eq(projects.id, projectId),
+        eq(projects.organizationId, organizationId),
+        isNull(projects.archivedAt),
+      ),
+    )
+    .returning();
+
+  if (!row) {
+    throw new AppError("NOT_FOUND");
+  }
+
+  return row;
+}
+
 async function tryCreateDefaultProject(organizationId: string) {
   const id = crypto.randomUUID();
   const inserted = await db
@@ -224,6 +250,7 @@ export const ProjectRepository = {
   updateProject,
   updateProjectDomain,
   updateProjectMarket,
+  updateProjectIndexNowKey,
   tryCreateDefaultProject,
   archiveProject,
   restoreProject,

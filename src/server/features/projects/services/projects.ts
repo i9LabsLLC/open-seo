@@ -1,15 +1,19 @@
 import type {
   ArchiveProjectInput,
   CreateProjectInput,
+  GenerateProjectIndexNowKeyInput,
   RestoreProjectInput,
   SetProjectDomainInput,
+  SetProjectIndexNowKeyInput,
   SetProjectMarketInput,
   UpdateProjectInput,
 } from "@/types/schemas/projects";
 import { ProjectRepository } from "@/server/features/projects/repositories/ProjectRepository";
 import { normalizeBacklinksTarget } from "@/server/lib/dataforseoBacklinksTarget";
+import { generateIndexNowKey } from "@/server/lib/indexnow";
 import { AppError } from "@/server/lib/errors";
 import { assertLanguageForLocation } from "@/server/lib/market";
+import { INDEXNOW_KEY_RULE, isValidIndexNowKey } from "@/shared/indexnow";
 import { getLanguageCode } from "@/shared/keyword-locations";
 
 function mapProject(project: {
@@ -18,6 +22,7 @@ function mapProject(project: {
   domain: string | null;
   locationCode: number;
   languageCode: string;
+  indexNowKey: string | null;
   createdAt: string;
 }) {
   return {
@@ -28,6 +33,9 @@ function mapProject(project: {
     // fall back to these when a call omits locationCode/languageCode).
     locationCode: project.locationCode,
     languageCode: project.languageCode,
+    // Null until IndexNow is set up. Not a secret — it is published as
+    // `<key>.txt` on the project's own domain.
+    indexNowKey: project.indexNowKey,
     createdAt: project.createdAt,
   };
 }
@@ -183,6 +191,60 @@ export async function setProjectMarket(
     { locationCode: input.locationCode, languageCode: input.languageCode },
   );
   return mapProject(row);
+}
+
+/**
+ * Saves a pasted IndexNow key, or clears it when the key is empty. Sites that
+ * already publish a key file (from another tool) keep using that key, so the
+ * value is validated against the protocol's character set rather than assumed
+ * to be one OpenSEO generated.
+ */
+export async function setProjectIndexNowKey(
+  organizationId: string,
+  input: SetProjectIndexNowKeyInput,
+) {
+  const key = input.key || null;
+  if (key !== null && !isValidIndexNowKey(key)) {
+    throw new AppError("VALIDATION_ERROR", INDEXNOW_KEY_RULE);
+  }
+  const row = await ProjectRepository.updateProjectIndexNowKey(
+    input.projectId,
+    organizationId,
+    key,
+  );
+  return mapProject(row);
+}
+
+/** Replaces the project's IndexNow key with a fresh one. */
+export async function generateProjectIndexNowKey(
+  organizationId: string,
+  input: GenerateProjectIndexNowKeyInput,
+) {
+  const row = await ProjectRepository.updateProjectIndexNowKey(
+    input.projectId,
+    organizationId,
+    generateIndexNowKey(),
+  );
+  return mapProject(row);
+}
+
+/**
+ * The project's IndexNow key, provisioning one on first use so an agent can
+ * set IndexNow up without visiting settings. Takes the already-fetched project
+ * (the MCP auth gate reads it) instead of re-querying.
+ */
+export async function ensureProjectIndexNowKey(
+  organizationId: string,
+  project: { id: string; indexNowKey: string | null },
+) {
+  if (project.indexNowKey) return project.indexNowKey;
+  const key = generateIndexNowKey();
+  await ProjectRepository.updateProjectIndexNowKey(
+    project.id,
+    organizationId,
+    key,
+  );
+  return key;
 }
 
 export async function archiveProject(

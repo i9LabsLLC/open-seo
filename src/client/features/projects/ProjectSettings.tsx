@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
 import { SearchConsoleConnectionCard } from "@/client/features/gsc/SearchConsoleConnectionCard";
 import { GoogleAnalyticsConnectionCard } from "@/client/features/ga4/GoogleAnalyticsConnectionCard";
+import { IndexNowCard } from "@/client/features/projects/IndexNowCard";
 import { ProjectMarketFields } from "@/client/features/projects/ProjectMarketFields";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
 import {
@@ -65,6 +66,11 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
       <section id="google-analytics" className="space-y-3 scroll-mt-6">
         <h2 className="text-sm font-medium text-base-content/50">Analytics</h2>
         <GoogleAnalyticsConnectionCard projectId={projectId} />
+      </section>
+
+      <section id="indexnow" className="space-y-3 scroll-mt-6">
+        <h2 className="text-sm font-medium text-base-content/50">IndexNow</h2>
+        <IndexNowCard project={project} />
       </section>
 
       <DangerSection project={project} canArchive={projects.length > 1} />

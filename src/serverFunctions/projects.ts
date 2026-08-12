@@ -7,8 +7,10 @@ import {
 import {
   archiveProjectSchema,
   createProjectSchema,
+  generateProjectIndexNowKeySchema,
   restoreProjectSchema,
   setProjectDomainSchema,
+  setProjectIndexNowKeySchema,
   setProjectMarketSchema,
   updateProjectSchema,
 } from "@/types/schemas/projects";
@@ -48,6 +50,20 @@ export const setProjectMarket = createServerFn({ method: "POST" })
   .validator(setProjectMarketSchema)
   .handler(async ({ data, context }) =>
     ProjectService.setProjectMarket(context.organizationId, data),
+  );
+
+export const setProjectIndexNowKey = createServerFn({ method: "POST" })
+  .middleware(requireProjectContext)
+  .validator(setProjectIndexNowKeySchema)
+  .handler(async ({ data, context }) =>
+    ProjectService.setProjectIndexNowKey(context.organizationId, data),
+  );
+
+export const generateProjectIndexNowKey = createServerFn({ method: "POST" })
+  .middleware(requireProjectContext)
+  .validator(generateProjectIndexNowKeySchema)
+  .handler(async ({ data, context }) =>
+    ProjectService.generateProjectIndexNowKey(context.organizationId, data),
   );
 
 export const archiveProject = createServerFn({ method: "POST" })

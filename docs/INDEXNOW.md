@@ -7,7 +7,8 @@ seconds. Because Bing's index feeds Copilot and ChatGPT search, faster Bing
 indexing also means faster appearance in those AI answers.
 
 OpenSEO exposes IndexNow through two MCP tools, so agents can close the
-publish → index loop without leaving the chat.
+publish → index loop without leaving the chat, plus an **IndexNow** card in
+**Project settings** for managing the key by hand.
 
 > **Google does not participate in IndexNow.** Submitting notifies Bing,
 > Yandex, Seznam, Naver, and Yep — a single submission is shared between them.
@@ -18,8 +19,28 @@ publish → index loop without leaving the chat.
 
 IndexNow proves you control a host by having you serve a **verification file**
 (`<key>.txt`, containing the key) at the host root. The key itself is not a
-secret. OpenSEO derives a **deterministic** 32-char key from the project id, so
-it's stable across restarts and needs no storage — you publish the file once.
+secret, which is why OpenSEO stores it in the clear (`projects.indexnow_key`)
+and shows it in project settings.
+
+The key is per project, so each site keeps its own. A site that already
+publishes a key file — from another tool, or an earlier install — can keep that
+key: paste it instead of generating one, and the published file stays valid.
+
+## Managing the key in the UI
+
+**Project settings → IndexNow** (the project needs a domain first):
+
+- **Generate key** — OpenSEO picks a 32-hex-char key and saves it.
+- **Paste an existing key** — for a key file the site already serves. Accepted
+  values are 8-128 characters of letters, numbers, and dashes (the protocol's
+  own rule).
+- **Replace key** — issues a new key. The file you already published stops
+  matching, so publish the new one before submitting again.
+- **Remove** — clears the key. `submit_urls_indexnow` then errors instead of
+  submitting.
+
+The card shows the exact URL the verification file has to resolve at, with copy
+buttons for both the key and that URL.
 
 ## Tools
 
@@ -28,6 +49,10 @@ it's stable across restarts and needs no storage — you publish the file once.
 Returns `{ host, key, keyLocation, keyFileContent }` for a project (requires the
 project to have a domain). Publish a file at `keyLocation` whose entire contents
 are `keyFileContent`. Uses no credits.
+
+The first call **generates and saves** a key if the project has none, so an
+agent can set IndexNow up without a settings visit; later calls return that same
+stored key and never replace it. Only the UI's Replace action issues a new one.
 
 ### `submit_urls_indexnow`
 
@@ -41,8 +66,8 @@ credits.
 engine just may not have accepted the list. `ok` tracks 2xx, so `202`
 ("accepted, key validation pending") is a success. A `403` means the key file
 isn't published (or doesn't match) — the agent can read that and fix it. Only a
-malformed request throws: no domain on the project, or no submitted URL on the
-project's host.
+malformed request throws: no domain on the project, no IndexNow key yet, or no
+submitted URL on the project's host.
 
 | Status | Meaning                                                            |
 | ------ | ------------------------------------------------------------------ |
@@ -56,8 +81,10 @@ project's host.
 ## Setup (one time per project)
 
 1. Ensure the project has a `domain`.
-2. `get_indexnow_key` → publish the returned file at `https://<domain>/<key>.txt`.
-3. Verify it resolves: `curl https://<domain>/<key>.txt` returns the key.
+2. Get the key: **Project settings → IndexNow → Generate key**, or call
+   `get_indexnow_key`. Both produce the same stored key.
+3. Publish the file at `https://<domain>/<key>.txt`, containing only the key.
+4. Verify it resolves: `curl https://<domain>/<key>.txt` returns the key.
 
 ## Usage
 
