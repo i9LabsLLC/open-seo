@@ -5,14 +5,14 @@ services:
     env_file: .env
     environment:
       AUTH_MODE: local_noauth
-      CLOUDFLARE_INCLUDE_PROCESS_ENV: 'true'
-      PORT: '3001'
+      CLOUDFLARE_INCLUDE_PROCESS_ENV: "true"
+      PORT: "3001"
       # Set by the deploy workflow from the OPENSEO_ALLOWED_HOST secret.
       ALLOWED_HOST: ${OPENSEO_ALLOWED_HOST:?Set OPENSEO_ALLOWED_HOST}
-      OPENSEO_TELEMETRY_DISABLED: '1'
-      VITE_SHOW_DEVTOOLS: 'false'
+      OPENSEO_TELEMETRY_DISABLED: "1"
+      VITE_SHOW_DEVTOOLS: "false"
     ports:
-      - '${OPENSEO_BIND_IP:-127.0.0.1}:3001:3001'
+      - "${OPENSEO_BIND_IP:-127.0.0.1}:3001:3001"
     volumes:
       - open_seo_data:/app/.wrangler
 volumes:
