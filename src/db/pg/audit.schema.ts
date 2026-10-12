@@ -7,6 +7,7 @@ import {
   real,
   text,
 } from "drizzle-orm/pg-core";
+import { PAGE_FETCH_CLASSES } from "@/shared/audit-fetch-class";
 import { projects } from "./app.schema";
 
 // Timestamps are stored as *text* (same column shape as the SQLite schema); see
@@ -87,6 +88,8 @@ export const auditPages = pgTable(
     h4Count: integer("h4_count").notNull().default(0),
     h5Count: integer("h5_count").notNull().default(0),
     h6Count: integer("h6_count").notNull().default(0),
+    // No longer written; existing rows still hold data. Drop with images_json
+    // and hreflang_tags_json once no deployed code references them.
     headingOrderJson: text("heading_order_json"),
     // Content
     wordCount: integer("word_count").notNull().default(0),
@@ -112,8 +115,7 @@ export const auditPages = pgTable(
     inSitemap: boolean("in_sitemap").notNull().default(false),
     // SHA-256 of the visible body text, for duplicate-content grouping
     contentHash: text("content_hash"),
-    // How the fetch resolved: ok | blocked (WAF/bot challenge) | error
-    fetchClass: text("fetch_class", { enum: ["ok", "blocked", "error"] })
+    fetchClass: text("fetch_class", { enum: PAGE_FETCH_CLASSES })
       .notNull()
       .default("ok"),
     // Performance

@@ -31,30 +31,28 @@ function metricValues(values: string[]) {
   return values.map((value) => ({ value }));
 }
 
+// One row of the seven overview metrics, in header order.
+const overviewRow = [
+  { value: "100" },
+  { value: "80" },
+  { value: "70" },
+  { value: "0.7" },
+  { value: "10" },
+  { value: "4" },
+  { value: "500" },
+];
+
 describe("Ga4OrganicOverviewService", () => {
   beforeEach(() => {
     mocks.getByProjectId.mockResolvedValue(connection);
   });
 
-  it("returns an equal-length comparison and weekly trend", async () => {
+  it("returns an equal-length comparison and flags a truncated trend", async () => {
     mocks.runReport
       .mockResolvedValueOnce({
         dimensionHeaders: [],
         metricHeaders,
-        rows: [
-          {
-            dimensionValues: [],
-            metricValues: metricValues([
-              "100",
-              "80",
-              "70",
-              "0.7",
-              "10",
-              "4",
-              "500",
-            ]),
-          },
-        ],
+        rows: [{ dimensionValues: [], metricValues: overviewRow }],
         rowCount: 1,
       })
       .mockResolvedValueOnce({
@@ -80,20 +78,9 @@ describe("Ga4OrganicOverviewService", () => {
         dimensionHeaders: [{ name: "yearWeek" }],
         metricHeaders,
         rows: [
-          {
-            dimensionValues: [{ value: "202631" }],
-            metricValues: metricValues([
-              "100",
-              "80",
-              "70",
-              "0.7",
-              "10",
-              "4",
-              "500",
-            ]),
-          },
+          { dimensionValues: [{ value: "202631" }], metricValues: overviewRow },
         ],
-        rowCount: 1,
+        rowCount: 1200,
       });
     const result = await Ga4OrganicOverviewService.getOrganicOverview(
       {
@@ -120,6 +107,7 @@ describe("Ga4OrganicOverviewService", () => {
       sessions: 100,
     });
     expect(result.diagnostics).toEqual([]);
+    expect(result.warnings).toEqual(["trend_truncated"]);
     expect(mocks.runReport).toHaveBeenCalledTimes(3);
   });
 

@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CodeBlock, CopyButton } from "@/client/features/ai-mcp/SetupControls";
+import { CopyButton } from "@/client/components/CopyButton";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
 import { indexNowStateKey } from "@/client/features/projects/IndexNowCard";
 import {
@@ -121,5 +121,19 @@ export function IndexNowWebhookCard({
         </div>
       </div>
     </section>
+  );
+}
+
+/** A copyable code sample (upstream dropped the shared CodeBlock). */
+function CodeBlock({ code }: { code: string }) {
+  return (
+    <div className="flex items-stretch overflow-hidden rounded-md border border-base-300 bg-base-100">
+      <pre className="min-w-0 flex-1 overflow-x-auto p-3 text-xs leading-relaxed text-base-content">
+        <code className="font-mono">{code}</code>
+      </pre>
+      <div className="flex shrink-0 items-start border-l border-base-300 p-1.5">
+        <CopyButton value={code} successMessage="Copied to clipboard" />
+      </div>
+    </div>
   );
 }

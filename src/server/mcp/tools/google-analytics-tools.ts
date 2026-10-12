@@ -2,6 +2,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { Ga4MeasurementHealthService } from "@/server/features/ga4/services/Ga4MeasurementHealthService";
+import { OVERVIEW_METRICS } from "@/server/features/ga4/services/Ga4ReportDefinitions";
 import { Ga4OrganicOverviewService } from "@/server/features/ga4/services/Ga4OrganicOverviewService";
 import {
   GscApiError,
@@ -11,6 +12,7 @@ import {
 import {
   Ga4ReportingService,
   type Ga4ReportInput,
+  type Ga4ReportResult,
 } from "@/server/features/ga4/services/Ga4ReportingService";
 import { Ga4ReportError } from "@/server/lib/ga4Errors";
 import { SearchOpportunityService } from "@/server/features/ga4/services/SearchOpportunityService";
@@ -19,6 +21,7 @@ import { mcpResponse } from "@/server/mcp/formatters";
 import { looseObjectOutputSchema } from "@/server/mcp/output-schemas";
 import { withMcpProjectAuth } from "@/server/mcp/project-auth";
 import { projectIdSchema } from "@/server/mcp/schemas";
+import { formatMcpTable, type McpTableColumn } from "@/server/mcp/table";
 import { buildDashboardUrl } from "@/server/mcp/urls";
 
 const dateSchema = z
@@ -159,7 +162,10 @@ function actionUrl(
         "ga4_property_inaccessible",
       ].includes(code)
     ) {
-      return buildDashboardUrl(baseUrl, `/p/${projectId}/settings`);
+      return buildDashboardUrl(
+        baseUrl,
+        `/p/${projectId}/settings/integrations`,
+      );
     }
     return undefined;
   }
@@ -212,10 +218,55 @@ function errorResponse(
   });
 }
 
-function reportText(
-  label: string,
-  result: Awaited<ReturnType<typeof Ga4ReportingService.runReport>>,
-) {
+type Ga4ReportRow = Ga4ReportResult["rows"][number];
+type Ga4OverviewResult = Awaited<
+  ReturnType<typeof Ga4OrganicOverviewService.getOrganicOverview>
+>;
+
+// These four MCP tools accept channel=all. landing_pages is Organic Search
+// only and has no channel argument.
+const CHANNEL_SELECTABLE_REPORTS = new Set<
+  Ga4ReportResult["request"]["reportKind"]
+>([
+  "page_performance",
+  "key_events",
+  "ecommerce_performance",
+  "audience_breakdown",
+]);
+
+function reportTableColumns(
+  result: Ga4ReportResult,
+): McpTableColumn<Ga4ReportRow>[] {
+  return [...result.request.dimensions, ...result.request.metrics].map(
+    (key) => ({
+      header: key,
+      value: (row) => row[key],
+    }),
+  );
+}
+
+function emptyOrganicHint(result: Ga4ReportResult): string {
+  if (
+    result.totalRowCount !== 0 ||
+    result.request.channel !== "organic_search"
+  ) {
+    return "";
+  }
+  return CHANNEL_SELECTABLE_REPORTS.has(result.request.reportKind)
+    ? " This report is filtered to Organic Search. Pass channel=all to include every channel."
+    : " This report is limited to Organic Search.";
+}
+
+function endDateClampNote(result: {
+  warnings: string[];
+  request: { resolvedDateRange: { endDate: string } };
+}) {
+  return result.warnings.includes("end_date_clamped")
+    ? ` The requested endDate was moved back to ${result.request.resolvedDateRange.endDate}, the last complete Analytics day.`
+    : "";
+}
+
+function reportText(label: string, result: Ga4ReportResult) {
   const range = result.request.resolvedDateRange;
   const comparison = result.comparison
     ? ` Previous-period comparison returned ${result.comparison.rows.length} row(s).`
@@ -224,7 +275,37 @@ function reportText(
     result.diagnostics.length > 0
       ? ` ${result.diagnostics.length} diagnostic finding(s) are included.`
       : "";
-  return `${label}: ${result.rowCount} of ${result.totalRowCount} rows for ${range.startDate} through ${range.endDate}.${comparison}${diagnostics}${result.reportMetadata.hasLimitedData ? " Google marked this report as limited; inspect reportMetadata." : ""}`;
+  const limited = result.reportMetadata.hasLimitedData
+    ? " Google marked this report as limited; inspect reportMetadata."
+    : "";
+  const paginate = result.pageInfo.hasMore
+    ? " More rows are available; call again with offset to page through them."
+    : "";
+  const summary = `${label}: ${result.rowCount} of ${result.totalRowCount} rows for ${range.startDate} through ${range.endDate}.${endDateClampNote(result)}${comparison}${diagnostics}${limited}${emptyOrganicHint(result)}${paginate}`;
+  if (result.rows.length === 0) return summary;
+  return `${summary}\n${formatMcpTable(result.rows, reportTableColumns(result))}`;
+}
+
+function overviewText(result: Ga4OverviewResult) {
+  const range = result.request.resolvedDateRange;
+  const previousRange = result.request.previousDateRange;
+  const trendTruncated = result.warnings.includes("trend_truncated")
+    ? ` The trend was cut at ${result.trend.length} rows; use trend=weekly or a shorter date range for the full series.`
+    : "";
+  const summary = `Organic overview for ${range.startDate} through ${range.endDate}, compared with ${previousRange.startDate} through ${previousRange.endDate}.${endDateClampNote(result)}${trendTruncated}`;
+  if (!result.current) {
+    return `${summary} No Organic Search rows for this date range.`;
+  }
+  const rows = OVERVIEW_METRICS.map((metric) => ({
+    metric,
+    current: result.current[metric] ?? null,
+    previous: result.previous?.[metric] ?? null,
+  }));
+  return `${summary}\n${formatMcpTable(rows, [
+    { header: "metric", value: (row) => row.metric },
+    { header: "current", value: (row) => row.current },
+    { header: "previous", value: (row) => row.previous },
+  ])}`;
 }
 
 function createAnalyticsReportHandler<TArgs extends ProjectArgs>(
@@ -253,7 +334,7 @@ export const getGoogleAnalyticsOrganicLandingPagesTool = {
   config: {
     title: "Get Google Analytics organic landing pages",
     description:
-      "Read organic-search landing page sessions, engagement, key events, transactions, and revenue from the project's connected GA4 property. Defaults to the last 28 complete property days. Read-only and uses no OpenSEO credits.",
+      "Read organic-search landing page sessions, engagement, key events, transactions, and revenue from the project's connected GA4 property. Defaults to the last 28 complete property days. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: landingPageInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -287,7 +368,7 @@ export const getGoogleAnalyticsPagePerformanceTool = {
   config: {
     title: "Get Google Analytics page performance",
     description:
-      "Read page views, users, engagement duration, and key events from the connected GA4 property. Organic Search is the default; set channel to all to include every channel. Read-only and uses no OpenSEO credits.",
+      "Read page views, users, engagement duration, and key events from the connected GA4 property. Organic Search is the default; set channel to all to include every channel. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: pagePerformanceInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -324,7 +405,7 @@ export const getGoogleAnalyticsKeyEventsTool = {
   config: {
     title: "Get Google Analytics key events",
     description:
-      "Read active GA4 key events with counts and users by event or organic landing page. Previous-period comparison is available for the event breakdown. Read-only and uses no OpenSEO credits.",
+      "Read active GA4 key events with counts and users by event or organic landing page. Previous-period comparison is available for the event breakdown. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: keyEventsInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -355,7 +436,7 @@ export const getSearchOpportunitiesTool = {
   config: {
     title: "Get search opportunities",
     description:
-      "Join Search Console pages ranking in positions 4–20 with GA4 organic landing-page outcomes, then score matched opportunities by demand, business value, and reachability. Unmatched pages remain visible and unscored. Read-only and uses no OpenSEO credits.",
+      "Join Search Console pages ranking in positions 4–20 with GA4 organic landing-page outcomes, then score matched opportunities by demand, business value, and reachability. Unmatched pages remain visible and unscored. Reads only the Search Console and GA4 properties already connected to an OpenSEO project the caller is authorized to access. The server selects the Google accounts and properties from that project's saved connections. Read-only and uses no OpenSEO credits.",
     inputSchema: opportunityInputSchema,
     outputSchema: opportunityOutputSchema,
     annotations: {
@@ -391,7 +472,7 @@ export const getGoogleAnalyticsOrganicOverviewTool = {
   config: {
     title: "Get Google Analytics organic overview",
     description:
-      "Answer whether organic traffic is improving with top-line sessions, users, engagement, key events, transactions, revenue, an equal-length previous-period comparison, and a daily or weekly trend. Read-only and uses no OpenSEO credits.",
+      "Answer whether organic traffic is improving with top-line sessions, users, engagement, key events, transactions, revenue, an equal-length previous-period comparison, and a daily or weekly trend. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: overviewInputSchema,
     outputSchema: overviewOutputSchema,
     annotations: {
@@ -404,7 +485,7 @@ export const getGoogleAnalyticsOrganicOverviewTool = {
     try {
       const result = await Ga4OrganicOverviewService.getOrganicOverview(args);
       return mcpResponse({
-        text: `Organic overview for ${result.request.resolvedDateRange.startDate} through ${result.request.resolvedDateRange.endDate}, compared with ${result.request.previousDateRange.startDate} through ${result.request.previousDateRange.endDate}.`,
+        text: overviewText(result),
         meta: buildProjectMeta(context, args.projectId),
         structuredContent: result,
       });
@@ -429,7 +510,7 @@ export const getGoogleAnalyticsTrafficAcquisitionTool = {
   config: {
     title: "Get Google Analytics traffic acquisition",
     description:
-      "Compare session acquisition by channel group, source/medium, or campaign, including sessions, users, engagement, key events, transactions, and revenue. Previous-period comparison is available for channel group; source/medium also reports attribution-quality diagnostics. Read-only and uses no OpenSEO credits.",
+      "Compare session acquisition by channel group, source/medium, or campaign, including sessions, users, engagement, key events, transactions, and revenue. Previous-period comparison is available for channel group; source/medium also reports attribution-quality diagnostics. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: trafficAcquisitionInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -466,7 +547,7 @@ export const getGoogleAnalyticsEcommercePerformanceTool = {
   config: {
     title: "Get Google Analytics ecommerce performance",
     description:
-      "Read item views, add-to-cart units, purchases, and item revenue by item, or transactions and purchase revenue by landing page. Returns a detected, none, or unknown activity state; landing pages can be limited to those with transactions. Organic Search is the default. Read-only and uses no OpenSEO credits.",
+      "Read item views, add-to-cart units, purchases, and item revenue by item, or transactions and purchase revenue by landing page. Returns a detected, none, or unknown activity state; landing pages can be limited to those with transactions. Organic Search is the default. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: ecommerceInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -495,7 +576,7 @@ export const getGoogleAnalyticsSiteSearchTool = {
   config: {
     title: "Get Google Analytics site search",
     description:
-      "Read measured internal search terms with search events, users, sessions, engaged sessions, and engagement rate. Requires GA4 site-search measurement. Read-only and uses no OpenSEO credits.",
+      "Read measured internal search terms with search events, users, sessions, engaged sessions, and engagement rate. Requires GA4 site-search measurement. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: siteSearchInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -533,7 +614,7 @@ export const getGoogleAnalyticsAudienceBreakdownTool = {
   config: {
     title: "Get Google Analytics audience breakdown",
     description:
-      "Read device, country, or new-versus-returning users, sessions, engagement, and key events. Previous-period comparison is available for device and new-versus-returning breakdowns. No demographic or user-level dimensions. Read-only and uses no OpenSEO credits.",
+      "Read device, country, or new-versus-returning users, sessions, engagement, and key events. Previous-period comparison is available for device and new-versus-returning breakdowns. No demographic or user-level dimensions. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: audienceInputSchema,
     outputSchema: reportOutputSchema,
     annotations: {
@@ -563,7 +644,7 @@ export const getGoogleAnalyticsMeasurementHealthTool = {
   config: {
     title: "Get Google Analytics measurement health",
     description:
-      "Diagnose the connected property's data streams, web measurement IDs, enhanced-measurement settings, key events, and custom definitions. Read-only and uses no OpenSEO credits.",
+      "Diagnose the connected property's data streams, web measurement IDs, enhanced-measurement settings, key events, and custom definitions. Reads only the GA4 property already connected to an OpenSEO project the caller is authorized to access. The server selects the Google account and property from that project's saved connection. Read-only and uses no OpenSEO credits.",
     inputSchema: measurementHealthInputSchema,
     outputSchema: measurementHealthOutputSchema,
     annotations: {

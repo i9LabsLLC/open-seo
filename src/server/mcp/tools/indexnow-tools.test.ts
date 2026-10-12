@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeToolContext } from "./tool-test-support";
 
+vi.mock("cloudflare:workers", () => ({ env: {} }));
+
 const STORED_KEY = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 
 const mocks = vi.hoisted(() => ({

@@ -14,7 +14,7 @@ export const getIndexNowKeyTool = {
     description:
       "Return the project's IndexNow key and the verification file to publish. Uses no credits. The key is stored on the project and shown in its settings; the first call generates one, later calls return that same key. To activate IndexNow, host a file at the returned keyLocation whose entire contents are the key, then check it with verify_indexnow_key and submit URLs with submit_urls_indexnow. Requires the project to have a domain.",
     inputSchema: { projectId: projectIdSchema },
-    outputSchema: {
+    outputSchema: z.looseObject({
       host: z.string(),
       key: z.string(),
       keyLocation: z.string(),
@@ -22,7 +22,7 @@ export const getIndexNowKeyTool = {
       enabled: z.boolean(),
       lastVerifiedAt: z.string().nullable(),
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       // Provisions the key on first call, so not strictly read-only — but it
       // never replaces an existing one.
@@ -59,13 +59,13 @@ export const verifyIndexNowKeyTool = {
     description:
       "Fetch the project's IndexNow verification file and check that it contains the project's key. Uses no credits. Run this after publishing the file: engines answer 403 to submissions until it is live, and this reports exactly why (missing file, wrong contents, unreachable host).",
     inputSchema: { projectId: projectIdSchema },
-    outputSchema: {
+    outputSchema: z.looseObject({
       verified: z.boolean(),
       keyLocation: z.string(),
       status: z.number().nullable(),
       detail: z.string(),
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       readOnlyHint: true,
       openWorldHint: true,
@@ -106,7 +106,7 @@ export const submitUrlsIndexNowTool = {
           "Absolute URLs on the project's domain to (re)index (1-10000).",
         ),
     },
-    outputSchema: {
+    outputSchema: z.looseObject({
       host: z.string(),
       submitted: z.number(),
       failed: z.number(),
@@ -115,7 +115,7 @@ export const submitUrlsIndexNowTool = {
       ok: z.boolean(),
       keyLocation: z.string(),
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       readOnlyHint: false,
       openWorldHint: true,
@@ -171,9 +171,9 @@ export const getIndexingHistoryTool = {
         .optional()
         .describe("How many events to return, newest first (default 50)."),
     },
-    outputSchema: {
+    outputSchema: z.looseObject({
       events: z.array(
-        z.object({
+        z.looseObject({
           url: z.string(),
           eventType: z.string(),
           status: z.string(),
@@ -183,7 +183,7 @@ export const getIndexingHistoryTool = {
         }),
       ),
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       readOnlyHint: true,
       openWorldHint: false,

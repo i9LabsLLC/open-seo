@@ -1,0 +1,57 @@
+name: Deploy shared OpenSEO
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: openseo-shared
+  cancel-in-progress: false
+jobs:
+  deploy:
+    # feat/indexnow-ui is the deployed branch until upstream merges IndexNow
+    # and Bing (every-app/open-seo); then deploy from main again.
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/indexnow-ui') && github.repository == 'i9LabsLLC/open-seo'
+    runs-on: [self-hosted, Linux, X64, openseo]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and deploy the selected revision
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SSH_KNOWN_HOSTS: ${{ vars.SSH_KNOWN_HOSTS }}
+          # A secret, not a variable: this repo is public and Actions logs print
+          # variable values; secrets are masked.
+          OPENSEO_ALLOWED_HOST: ${{ secrets.OPENSEO_ALLOWED_HOST }}
+        run: |
+          set -euo pipefail
+          [[ "$SERVER_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$SERVER_USER" =~ ^[a-z_][a-zA-Z0-9_-]*$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$OPENSEO_ALLOWED_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          test -n "$SSH_KNOWN_HOSTS"
+          known_hosts=$(mktemp)
+          trap 'rm -f "$known_hosts"' EXIT
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$known_hosts"
+          # Existing runner identity already trusted by template 9001.
+          # No SSH private key is copied, uploaded, or written by this workflow.
+          opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" -o IdentitiesOnly=yes -i "$HOME/.ssh/id_rsa")
+          target="$SERVER_USER@$SERVER_HOST"
+          ssh "${opts[@]}" "$target" 'test -w /opt/openseo && docker info >/dev/null'
+          image="openseo:$GITHUB_SHA"
+          docker build -f deploy/docker/Dockerfile -t "$image" .
+          docker save "$image" | gzip | ssh "${opts[@]}" "$target" 'gunzip | docker load'
+          scp "${opts[@]}" deploy/compose.yaml "$target:/opt/openseo/compose.yaml"
+          ssh "${opts[@]}" "$target" "bash -s -- '$image' '$OPENSEO_ALLOWED_HOST'" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/openseo
+          umask 077
+          # Preserve the existing application configuration and data.
+          test -f .env || touch .env
+          printf 'OPEN_SEO_IMAGE=%s\nOPENSEO_ALLOWED_HOST=%s\n' "$1" "$2" > image.env
+          docker compose --env-file .env --env-file image.env -p openseo up -d --wait --wait-timeout 1200
+          curl --fail --silent http://127.0.0.1:3001/api/health
+          REMOTE

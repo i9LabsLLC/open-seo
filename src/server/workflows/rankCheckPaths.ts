@@ -10,6 +10,7 @@ import type {
   RankCheckResult,
   RankCheckTaskInput,
 } from "@/server/lib/dataforseo";
+import { AppError } from "@/server/lib/errors";
 import type { RankTrackingConfig } from "@/types/schemas/rank-tracking";
 import { KEYWORDS_PER_BATCH } from "@/shared/rank-tracking";
 import { pgStep } from "@/server/workflows/pgStep";
@@ -76,39 +77,53 @@ function expandToTaskInputs(
 
 /**
  * Check keyword/device pairs against the live endpoint and persist snapshots.
- * Per-call failures are logged and skipped (the metered client already charged
- * or refused each call individually). Returns the snapshot count written.
+ * The batch is billed with one credit hold and one settle. Per-call failures
+ * are logged and skipped; if the hold itself fails, no call runs and every
+ * pair fails with that error. Returns the snapshot count written.
  */
 async function checkBatchLive(
   ctx: CheckContext,
   tasks: RankCheckTaskInput[],
 ): Promise<number> {
-  const settled = await Promise.allSettled(
-    tasks.map((task) =>
-      ctx.client.serp
-        .rankCheck({
-          keyword: task.keyword,
-          keywordId: task.keywordId,
-          locationCode: ctx.locationCode,
-          languageCode: ctx.languageCode,
-          locationName: ctx.locationName,
-          device: task.device,
-          targetDomain: ctx.domain,
-          depth: ctx.serpDepth,
-        })
-        .then((r) => ({ ...r, device: task.device })),
-    ),
-  );
+  let settled: PromiseSettledResult<RankCheckResult>[];
+  try {
+    settled = await ctx.client.serp.rankCheckBatch(
+      tasks.map((task) => ({
+        keyword: task.keyword,
+        keywordId: task.keywordId,
+        locationCode: ctx.locationCode,
+        languageCode: ctx.languageCode,
+        locationName: ctx.locationName,
+        device: task.device,
+        targetDomain: ctx.domain,
+        depth: ctx.serpDepth,
+      })),
+    );
+  } catch (error) {
+    settled = tasks.map(() => ({ status: "rejected", reason: error }));
+  }
   const results: RankCheckResultWithDevice[] = [];
-  for (const outcome of settled) {
+  let firstError: string | null = null;
+  settled.forEach((outcome, index) => {
     if (outcome.status === "fulfilled") {
-      results.push(outcome.value);
-    } else {
-      console.error(
-        `[rank-check] ${ctx.runId} live call failed:`,
-        outcome.reason,
-      );
+      results.push({ ...outcome.value, device: tasks[index].device });
+      return;
     }
+    const reason: unknown = outcome.reason;
+    const code = reason instanceof AppError ? reason.code : "UNKNOWN";
+    const message = reason instanceof Error ? reason.message : String(reason);
+    firstError ??= message;
+    // DataForSEO erring on its own side is a provider flake, not our bug: the
+    // keyword just misses this run and finalize reports it to the user. Every
+    // other rejection (no credits, bad API key) is ours and stays at error.
+    const log = code === "UPSTREAM_UNAVAILABLE" ? console.warn : console.error;
+    const task = tasks[index];
+    log(
+      `[rank-check] ${ctx.runId} live call failed (${code}) keyword="${task.keyword}" device=${task.device}: ${message}`,
+    );
+  });
+  if (firstError) {
+    await RankTrackingRepository.setRunErrorIfEmpty(ctx.runId, firstError);
   }
   if (results.length > 0) {
     await RankTrackingRepository.insertSnapshots(
@@ -122,7 +137,7 @@ async function checkBatchLive(
  * Check keywords via Live API, parallel devices per keyword, real-time progress.
  * Snapshots are written incrementally after each batch so partial results
  * survive batch failures. ~6s per keyword batch.
- * Billing is handled per-call by the metered client.
+ * Each batch is billed with one credit hold and one settle (checkBatchLive).
  */
 export async function runLiveCheck(
   step: WorkflowStep,
@@ -199,6 +214,7 @@ async function collectQueuedRound(
   const completed: RankCheckResultWithDevice[] = [];
   const stillPending: PostedRankCheckTask[] = [];
   const failed: PostedRankCheckTask[] = [];
+  let firstError: string | null = null;
 
   for (let i = 0; i < tasks.length; i += TASK_GET_CONCURRENCY) {
     const chunk = tasks.slice(i, i + TASK_GET_CONCURRENCY);
@@ -227,6 +243,7 @@ async function collectQueuedRound(
         console.warn(
           `[rank-check] ${ctx.runId} task ${task.taskId} failed: ${result.value.message}`,
         );
+        firstError ??= result.value.message;
         failed.push(task);
       } else {
         completed.push({ ...result.value.result, device: task.device });
@@ -234,6 +251,9 @@ async function collectQueuedRound(
     });
   }
 
+  if (firstError) {
+    await RankTrackingRepository.setRunErrorIfEmpty(ctx.runId, firstError);
+  }
   if (completed.length > 0) {
     await RankTrackingRepository.insertSnapshots(
       mapResultsToSnapshotRows(ctx.runId, completed),
@@ -268,7 +288,7 @@ export interface QueuedCheckStats {
  * ~15 minutes, writing snapshots incrementally as tasks complete. Anything
  * still unfinished after the polling window — plus tasks DataForSEO rejected
  * or failed — gets one shot at the live endpoint so a run never hangs on a
- * stuck queue. Billing happens at task_post (and per live-fallback call).
+ * stuck queue. Billing happens at task_post (and per live-fallback batch).
  */
 export async function runQueuedCheck(
   step: WorkflowStep,

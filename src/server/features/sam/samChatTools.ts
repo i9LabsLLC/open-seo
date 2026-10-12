@@ -1,3 +1,19 @@
+import {
+  getAiVisibilityTrackerTool,
+  generateAiVisibilityPromptsTool,
+  researchAiVisibilityPromptsTool,
+  completeAiResearchSetupTool,
+  saveAiVisibilityTrackerTool,
+  estimateAiVisibilityCostTool,
+  setAiVisibilityScheduleTool,
+  runAiVisibilityCheckTool,
+  getAiVisibilityRunTool,
+  getAiVisibilityResultsTool,
+  getAiVisibilityAnswerTool,
+  getAiVisibilitySourcesTool,
+  getAiVisibilityTrendTool,
+  exportAiVisibilityDataTool,
+} from "@/server/mcp/tools/ai-visibility-tools";
 import { tool, type Tool, type ToolSet } from "ai";
 import { z, type ZodRawShape } from "zod";
 import { withPgClient } from "@/db";
@@ -8,9 +24,36 @@ import { getBacklinksOverviewTool } from "@/server/mcp/tools/get-backlinks-overv
 import { getBacklinksProfileTool } from "@/server/mcp/tools/get-backlinks-profile";
 import { getDomainKeywordSuggestionsTool } from "@/server/mcp/tools/get-domain-keyword-suggestions";
 import { getDomainOverviewTool } from "@/server/mcp/tools/get-domain-overview";
+import { addRankTrackingKeywordsTool } from "@/server/mcp/tools/add-rank-tracking-keywords";
+import { createRankTrackerTool } from "@/server/mcp/tools/create-rank-tracker";
+import { estimateRankTrackerCostTool } from "@/server/mcp/tools/estimate-rank-tracker-cost";
 import { getRankTrackerTool } from "@/server/mcp/tools/get-rank-tracker";
+import { removeRankTrackingKeywordsTool } from "@/server/mcp/tools/remove-rank-tracking-keywords";
+import { pinRankTrackingKeywordsTool } from "@/server/mcp/tools/pin-rank-tracking-keywords";
+import { runRankTrackerTool } from "@/server/mcp/tools/run-rank-tracker";
+import { searchSerpLocationsTool } from "@/server/mcp/tools/search-serp-locations";
 import { getSerpResultsTool } from "@/server/mcp/tools/get-serp-results";
+import {
+  getAuditIssuesTool,
+  getAuditPagesTool,
+  getAuditStatusTool,
+  runSiteAuditTool,
+} from "@/server/mcp/tools/site-audit-tools";
 import { listSavedKeywordsTool } from "@/server/mcp/tools/list-saved-keywords";
+import { removeSavedKeywordsTool } from "@/server/mcp/tools/remove-saved-keywords";
+import { buildUpdateProjectContextTool } from "@/server/mcp/tools/project-context";
+import {
+  getGoogleAnalyticsAudienceBreakdownTool,
+  getGoogleAnalyticsEcommercePerformanceTool,
+  getGoogleAnalyticsKeyEventsTool,
+  getGoogleAnalyticsMeasurementHealthTool,
+  getGoogleAnalyticsOrganicLandingPagesTool,
+  getGoogleAnalyticsOrganicOverviewTool,
+  getGoogleAnalyticsPagePerformanceTool,
+  getGoogleAnalyticsSiteSearchTool,
+  getGoogleAnalyticsTrafficAcquisitionTool,
+  getSearchOpportunitiesTool,
+} from "@/server/mcp/tools/google-analytics-tools";
 import {
   findSerpCompetitorsTool,
   getGoogleBusinessQuestionsTool,
@@ -19,6 +62,13 @@ import {
   getRankedKeywordsTool,
   searchLocalBusinessesTool,
 } from "@/server/mcp/tools/dataforseo-research-tools";
+import {
+  getBusinessProfileTool,
+  getBusinessReviewsTool,
+  getBusinessUpdatesTool,
+  getLocalRankGridTool,
+  listBusinessCategoriesTool,
+} from "@/server/mcp/tools/local-seo-tools";
 import { researchKeywordsTool } from "@/server/mcp/tools/research-keywords";
 import { saveKeywordsTool } from "@/server/mcp/tools/save-keywords";
 import {
@@ -26,11 +76,13 @@ import {
   inspectUrlsTool,
 } from "@/server/mcp/tools/search-console-tools";
 import { whoamiTool } from "@/server/mcp/tools/whoami";
+import { explorePromptTool } from "@/server/mcp/tools/explore-prompt";
 import { discoverSiteUrls, readPages, readSite } from "@/server/lib/scrape";
-import openSeoFactSheet from "@/server/features/onboarding/openseo-fact-sheet.md?raw";
+import { capToolOutput } from "@/server/features/sam/samToolOutput";
+import openSeoFactSheet from "@/server/features/sam/openseo-fact-sheet.md?raw";
 
-// SAM reads more of a site than the onboarding preview: enough pages to work
-// out what a business does, sells, and positions against on its own.
+// Enough pages for SAM to work out what a business does, sells, and positions
+// against on its own.
 const SAM_MAX_SCRAPE_PAGES = 10;
 const SAM_MAX_MAPPED_URLS = 60;
 
@@ -46,18 +98,35 @@ type McpToolDefinition<Shape extends ZodRawShape> = {
   ) => Promise<CallToolResult>;
 };
 
-// Flatten an MCP CallToolResult into a plain value for the model: the handler's
-// human-readable text summary plus the structured data it returned.
-function toModelOutput(result: CallToolResult): unknown {
-  const summary = (result.content ?? [])
+// Flatten an MCP CallToolResult into a plain value for the model. The text
+// block renders the same rows the structured data carries (see
+// tool-text-output.test.ts), so when both exist only the head of the text
+// survives — the title line and any caveat, not a second copy of every row.
+// A tool result is re-sent on every step of its turn and persisted in the
+// transcript, so the duplicate would cost twice everywhere.
+const SUMMARY_HEAD_CHARS = 300;
+
+export function toModelOutput(result: CallToolResult): {
+  summary: string;
+  data?: CallToolResult["structuredContent"];
+} {
+  const text = (result.content ?? [])
     .filter(
       (part): part is { type: "text"; text: string } => part.type === "text",
     )
     .map((part) => part.text)
     .join("\n");
-  return result.structuredContent
-    ? { summary, data: result.structuredContent }
-    : { summary };
+  const data = result.structuredContent;
+  // A text-only response still gets a `{ meta }` structuredContent when it
+  // carries a deep link; that is not a second copy of the text.
+  const dataHasRows =
+    data != null && Object.keys(data).some((key) => key !== "meta");
+  if (!dataHasRows) return data ? { summary: text, data } : { summary: text };
+  const summary =
+    text.length > SUMMARY_HEAD_CHARS
+      ? `${text.slice(0, SUMMARY_HEAD_CHARS)}… (full rows in data)`
+      : text;
+  return { summary, data };
 }
 
 // Adapt one OpenSEO tool into an AI SDK tool. The shared handler receives the
@@ -93,8 +162,8 @@ function adaptMcpTool<Shape extends ZodRawShape>(
         // Tool calls run inside Think's inference loop, outside any ambient
         // request scope, so each execution scopes its own Postgres client
         // (no-op in D1 mode) — same rule as the DO's other DB-touching seams.
-        return toModelOutput(
-          await withPgClient(() => handler(fullArgs, context)),
+        return capToolOutput(
+          toModelOutput(await withPgClient(() => handler(fullArgs, context))),
         );
       } catch (error) {
         // Surface the failure to the model so it can recover or report it,
@@ -107,9 +176,84 @@ function adaptMcpTool<Shape extends ZodRawShape>(
   });
 }
 
-// Free (credit-less) site-reading tools, mirroring the onboarding agent's
-// read_website but split into discovery + reading so the model can pick which
-// pages to read instead of blindly taking the first N sitemap entries.
+// Audits run for minutes, and a chat model cannot sleep — given an instant
+// status tool it spin-polls, and every call plus its result is persisted into
+// the session history. SAM's get_audit_status therefore waits server-side:
+// while the audit is running, it re-reads every few seconds and returns as
+// soon as the status line changes (or when the budget runs out), so one tool
+// call buys ~a minute of quiet waiting. The sleep sits BETWEEN adapted calls,
+// so each re-read scopes its own short-lived DB client rather than holding one
+// through the wait; each re-read also emits its own mcp:tool_call event, so
+// telemetry counts server polls, not model calls.
+const AUDIT_STATUS_POLL_MS = 2_000;
+const AUDIT_STATUS_WAIT_BUDGET_MS = 50_000;
+
+// The adapted tool returns toModelOutput's { summary, data } flattening; the
+// summary line carries phase + page counts, so a changed line IS progress.
+const auditProgressLine = (result: unknown): string | null =>
+  typeof result === "object" &&
+  result !== null &&
+  "summary" in result &&
+  typeof result.summary === "string"
+    ? result.summary
+    : null;
+
+const auditIsRunning = (result: unknown): boolean => {
+  if (typeof result !== "object" || result === null || !("data" in result)) {
+    return false;
+  }
+  const data = result.data;
+  if (typeof data !== "object" || data === null || !("status" in data)) {
+    return false;
+  }
+  const status = data.status;
+  return (
+    typeof status === "object" &&
+    status !== null &&
+    "status" in status &&
+    status.status === "running"
+  );
+};
+
+export function waitingAuditStatusTool(
+  adapt: (
+    definition: McpToolDefinition<typeof getAuditStatusTool.config.inputSchema>,
+  ) => Tool,
+): Tool {
+  const base = adapt({
+    ...getAuditStatusTool,
+    config: {
+      ...getAuditStatusTool.config,
+      description: `${getAuditStatusTool.config.description} While the audit is running this call waits up to ~1 minute server-side and returns as soon as progress changes, so never call it in a tight loop: check a few times, narrating progress to the user in between, and if it is still running after that, say so and let the user come back for the results.`,
+    },
+  });
+  const baseExecute = base.execute;
+  if (!baseExecute) return base;
+
+  return {
+    ...base,
+    execute: async (args, options) => {
+      const deadline = Date.now() + AUDIT_STATUS_WAIT_BUDGET_MS;
+      let result: unknown = await baseExecute(args, options);
+      const initial = auditProgressLine(result);
+      while (
+        auditIsRunning(result) &&
+        auditProgressLine(result) === initial &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, AUDIT_STATUS_POLL_MS),
+        );
+        result = await baseExecute(args, options);
+      }
+      return result;
+    },
+  };
+}
+
+// Free (credit-less) site-reading tools, split into discovery + reading so the
+// model can pick which pages to read instead of blindly taking the first N
+// sitemap entries.
 function scrapeTools(projectDomain: string | null): ToolSet {
   return {
     map_links: tool({
@@ -166,7 +310,7 @@ function scrapeTools(projectDomain: string | null): ToolSet {
             note: "Could not read the requested page(s). Ask the user to describe the site instead, and say you couldn't read it.",
           };
         }
-        return { blocked: false, pages: site.pages };
+        return capToolOutput({ blocked: false, pages: site.pages });
       },
     }),
   };
@@ -175,19 +319,50 @@ function scrapeTools(projectDomain: string | null): ToolSet {
 /**
  * Builds SAM's tool surface as an AI SDK ToolSet: the full MCP toolset plus the
  * free site-reading tools. Every tool the OpenSEO MCP server exposes is
- * available. Auth and billing context are passed directly to the shared tool
- * handlers. DataForSEO spend is metered inside the shared client, so tool calls
- * draw down the org's credits automatically.
+ * available except the ones a project-bound chat can't use (list_projects,
+ * create_project) and get_project_context (already a context block). Auth and
+ * billing context are passed directly to the shared tool handlers. DataForSEO
+ * spend is metered inside the shared client, so tool calls draw down the org's
+ * credits automatically.
+ *
+ * When the MCP server gains a tool, add it here too — this list drifted for six
+ * weeks once (audit + GA4 + rank-tracker management were MCP-only) before
+ * anyone noticed.
  */
 export function buildSamMcpTools(
   authContext: ToolAuthContext,
   project: { id: string; domain: string | null },
+  turnId?: string,
 ): ToolSet {
   const projectId = project.id;
-  const toolContext: ToolContext = { auth: authContext };
+  const toolContext: ToolContext = { auth: authContext, turnId };
   const adaptTool = <Shape extends ZodRawShape>(
     definition: McpToolDefinition<Shape>,
   ) => adaptMcpTool(definition, toolContext, projectId);
+
+  // The GA4 tools define inputSchema as a built ZodObject instead of a raw
+  // shape; unwrap it so the same adapter (projectId stripping included) applies.
+  type AnyMcpHandler = McpToolDefinition<ZodRawShape>["handler"];
+  const adaptObjectTool = (definition: {
+    name: string;
+    config: { description: string; inputSchema: { shape: ZodRawShape } };
+    handler: (args: never, context: ToolContext) => Promise<CallToolResult>;
+  }) => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- same arg shape; the adapter rebuilds z.object from the unwrapped shape before calling it
+    const handler = definition.handler as AnyMcpHandler;
+    return adaptMcpTool(
+      {
+        name: definition.name,
+        config: {
+          description: definition.config.description,
+          inputSchema: definition.config.inputSchema.shape,
+        },
+        handler,
+      },
+      toolContext,
+      projectId,
+    );
+  };
 
   // Note: no `list_projects`. SAM is bound to the session's project, so
   // discovering other projects isn't part of its job — every project-scoped tool
@@ -203,7 +378,11 @@ export function buildSamMcpTools(
     }),
     ...scrapeTools(project.domain),
     whoami: adaptTool(whoamiTool),
+    // Writes only: the project's memory is already injected into every turn as
+    // a read-only context block, so get_project_context would just re-fetch it.
+    update_project_context: adaptTool(buildUpdateProjectContextTool("sam")),
     list_saved_keywords: adaptTool(listSavedKeywordsTool),
+    remove_saved_keywords: adaptTool(removeSavedKeywordsTool),
     research_keywords: adaptTool(researchKeywordsTool),
     save_keywords: adaptTool(saveKeywordsTool),
     get_domain_overview: adaptTool(getDomainOverviewTool),
@@ -211,14 +390,75 @@ export function buildSamMcpTools(
     get_backlinks_overview: adaptTool(getBacklinksOverviewTool),
     get_backlinks_profile: adaptTool(getBacklinksProfileTool),
     get_serp_results: adaptTool(getSerpResultsTool),
+    search_serp_locations: adaptTool(searchSerpLocationsTool),
+    get_ai_visibility_tracker: adaptTool(getAiVisibilityTrackerTool),
+    generate_ai_visibility_prompts: adaptTool(generateAiVisibilityPromptsTool),
+    research_ai_visibility_prompts: adaptTool(researchAiVisibilityPromptsTool),
+    complete_ai_research_setup: adaptTool(completeAiResearchSetupTool),
+    explore_prompt: adaptTool(explorePromptTool),
+    save_ai_visibility_tracker: adaptTool(saveAiVisibilityTrackerTool),
+    estimate_ai_visibility_cost: adaptTool(estimateAiVisibilityCostTool),
+    set_ai_visibility_schedule: adaptTool(setAiVisibilityScheduleTool),
+    run_ai_visibility_check: adaptTool(runAiVisibilityCheckTool),
+    get_ai_visibility_run: adaptTool(getAiVisibilityRunTool),
+    get_ai_visibility_results: adaptTool(getAiVisibilityResultsTool),
+    get_ai_visibility_answer: adaptTool(getAiVisibilityAnswerTool),
+    get_ai_visibility_sources: adaptTool(getAiVisibilitySourcesTool),
+    get_ai_visibility_trend: adaptTool(getAiVisibilityTrendTool),
+    export_ai_visibility_data: adaptTool(exportAiVisibilityDataTool),
+    create_rank_tracker: adaptTool(createRankTrackerTool),
     get_rank_tracker: adaptTool(getRankTrackerTool),
+    add_rank_tracking_keywords: adaptTool(addRankTrackingKeywordsTool),
+    remove_rank_tracking_keywords: adaptTool(removeRankTrackingKeywordsTool),
+    pin_rank_tracking_keywords: adaptTool(pinRankTrackingKeywordsTool),
+    estimate_rank_tracker_cost: adaptTool(estimateRankTrackerCostTool),
+    run_rank_tracker: adaptTool(runRankTrackerTool),
     get_ranked_keywords: adaptTool(getRankedKeywordsTool),
     find_serp_competitors: adaptTool(findSerpCompetitorsTool),
     search_local_businesses: adaptTool(searchLocalBusinessesTool),
     get_local_serp_results: adaptTool(getLocalSerpResultsTool),
     get_google_business_questions: adaptTool(getGoogleBusinessQuestionsTool),
+    get_business_profile: adaptTool(getBusinessProfileTool),
+    get_business_reviews: adaptTool(getBusinessReviewsTool),
+    get_business_updates: adaptTool(getBusinessUpdatesTool),
+    list_business_categories: adaptTool(listBusinessCategoriesTool),
+    get_local_rank_grid: adaptTool(getLocalRankGridTool),
     get_keyword_metrics: adaptTool(getKeywordMetricsTool),
     get_search_console_performance: adaptTool(getSearchConsolePerformanceTool),
     inspect_urls: adaptTool(inspectUrlsTool),
+    // Unconditional like the MCP server's registrations — the GA4 launch gate
+    // was removed in #505.
+    get_google_analytics_organic_landing_pages: adaptObjectTool(
+      getGoogleAnalyticsOrganicLandingPagesTool,
+    ),
+    get_google_analytics_page_performance: adaptObjectTool(
+      getGoogleAnalyticsPagePerformanceTool,
+    ),
+    get_google_analytics_key_events: adaptObjectTool(
+      getGoogleAnalyticsKeyEventsTool,
+    ),
+    get_search_opportunities: adaptObjectTool(getSearchOpportunitiesTool),
+    get_google_analytics_organic_overview: adaptObjectTool(
+      getGoogleAnalyticsOrganicOverviewTool,
+    ),
+    get_google_analytics_traffic_acquisition: adaptObjectTool(
+      getGoogleAnalyticsTrafficAcquisitionTool,
+    ),
+    get_google_analytics_measurement_health: adaptObjectTool(
+      getGoogleAnalyticsMeasurementHealthTool,
+    ),
+    get_google_analytics_ecommerce_performance: adaptObjectTool(
+      getGoogleAnalyticsEcommercePerformanceTool,
+    ),
+    get_google_analytics_site_search: adaptObjectTool(
+      getGoogleAnalyticsSiteSearchTool,
+    ),
+    get_google_analytics_audience_breakdown: adaptObjectTool(
+      getGoogleAnalyticsAudienceBreakdownTool,
+    ),
+    run_site_audit: adaptTool(runSiteAuditTool),
+    get_audit_status: waitingAuditStatusTool(adaptTool),
+    get_audit_issues: adaptTool(getAuditIssuesTool),
+    get_audit_pages: adaptTool(getAuditPagesTool),
   };
 }

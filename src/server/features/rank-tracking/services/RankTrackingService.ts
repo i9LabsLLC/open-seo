@@ -8,9 +8,11 @@ import {
   fetchKeywordMetricsForList,
 } from "@/server/lib/dataforseo";
 import { RankTrackingRepository } from "@/server/features/rank-tracking/repositories/RankTrackingRepository";
+import { assertSerpLocationNameAccepted } from "@/server/lib/dataforseo/serp-location-validate";
 import { AppError } from "@/server/lib/errors";
 import { isHostedServerAuthMode } from "@/server/lib/runtime-env";
 import type {
+  RankCheckScheduleTime,
   RankTrackingConfig,
   RankCheckTriggerResult,
 } from "@/types/schemas/rank-tracking";
@@ -26,11 +28,12 @@ import {
   rankCheckCostApprovalError,
 } from "@/shared/rank-tracking";
 import {
+  getIsoCountryCode,
   resolveKeywordDataLanguage,
   resolveMarket,
 } from "@/shared/keyword-locations";
 import { getLatestResults } from "./rankTrackingResults";
-import { toSqliteTimestamp } from "@/server/features/rank-tracking/rankTrackingTimestamps";
+import { toRankTrackingTimestamp } from "@/server/features/rank-tracking/rankTrackingTimestamps";
 import { RankTrackingKeywordService } from "./RankTrackingKeywordService";
 
 // ---------------------------------------------------------------------------
@@ -47,6 +50,7 @@ async function createConfig(input: {
   devices?: RankTrackingConfig["devices"];
   serpDepth: number;
   scheduleInterval?: RankTrackingConfig["scheduleInterval"];
+  scheduleTime?: RankCheckScheduleTime;
 }) {
   const normalizedDomain = normalizeDomain(input.domain);
 
@@ -55,11 +59,19 @@ async function createConfig(input: {
     input.projectMarket,
   );
   const scheduleInterval = input.scheduleInterval ?? "weekly";
-  const nextCheckAt = isScheduledRankTrackingInterval(scheduleInterval)
-    ? computeNextCheckAt(scheduleInterval)
-    : null;
+  const nextCheckAt = resolveNextCheckAt(scheduleInterval, input.scheduleTime);
 
   const locationName = input.locationName ?? null;
+  // Before the duplicate/limit checks so an unusable location name is the
+  // error the caller sees.
+  if (locationName) {
+    await assertSerpLocationNameAccepted({
+      locationName,
+      languageCode,
+      countryCode: getIsoCountryCode(locationCode),
+    });
+  }
+
   const existing =
     await RankTrackingRepository.getConfigByProjectDomainLocation(
       input.projectId,
@@ -124,7 +136,7 @@ async function createConfig(input: {
     isActive: true,
     lastCheckedAt: null,
     lastSkipReason: null,
-    createdAt: toSqliteTimestamp(new Date()),
+    createdAt: toRankTrackingTimestamp(new Date()),
   };
 
   await RankTrackingRepository.createConfig(config);
@@ -143,10 +155,35 @@ async function updateConfig(
     devices?: RankTrackingConfig["devices"];
     serpDepth?: number;
     scheduleInterval?: RankTrackingConfig["scheduleInterval"];
+    scheduleTime?: RankCheckScheduleTime;
     isActive?: boolean;
   },
 ) {
-  const updates: typeof input & { nextCheckAt?: string | null } = {};
+  const { scheduleTime, ...fields } = input;
+  const updates: typeof fields & { nextCheckAt?: string | null } = {};
+  const existing = await getValidatedConfig(configId, projectId);
+
+  // A location name is only valid together with its market, so re-check the
+  // resulting (name, language, country) whenever any of the three changes.
+  const marketChanged =
+    input.locationName !== undefined ||
+    input.locationCode !== undefined ||
+    input.languageCode !== undefined;
+  if (marketChanged) {
+    const locationName =
+      input.locationName === undefined
+        ? existing.locationName
+        : input.locationName;
+    if (locationName) {
+      await assertSerpLocationNameAccepted({
+        locationName,
+        languageCode: input.languageCode ?? existing.languageCode,
+        countryCode: getIsoCountryCode(
+          input.locationCode ?? existing.locationCode,
+        ),
+      });
+    }
+  }
 
   if (input.domain !== undefined)
     updates.domain = normalizeDomain(input.domain);
@@ -160,16 +197,47 @@ async function updateConfig(
   if (input.serpDepth !== undefined) updates.serpDepth = input.serpDepth;
   if (input.isActive !== undefined) updates.isActive = input.isActive;
 
-  if (input.scheduleInterval !== undefined) {
-    updates.scheduleInterval = input.scheduleInterval;
-    if (input.scheduleInterval === "manual") {
-      updates.nextCheckAt = null;
-    } else {
-      updates.nextCheckAt = computeNextCheckAt(input.scheduleInterval);
-    }
+  const scheduleInterval = input.scheduleInterval ?? existing.scheduleInterval;
+  // The config modal resends the interval on every save, so only move the
+  // anchor when the schedule really changed — otherwise editing, say, devices
+  // would re-randomize the run time.
+  if (
+    scheduleTime ||
+    scheduleInterval !== existing.scheduleInterval ||
+    (scheduleInterval !== "manual" && !existing.nextCheckAt)
+  ) {
+    updates.scheduleInterval = scheduleInterval;
+    updates.nextCheckAt = resolveNextCheckAt(scheduleInterval, scheduleTime);
   }
 
   await RankTrackingRepository.updateConfig(configId, projectId, updates);
+}
+
+function resolveNextCheckAt(
+  scheduleInterval: RankTrackingConfig["scheduleInterval"],
+  scheduleTime: RankCheckScheduleTime | undefined,
+): string | null {
+  if (isScheduledRankTrackingInterval(scheduleInterval)) {
+    // Without one the check would quietly repeat on whatever day today is.
+    if (
+      scheduleInterval === "weekly" &&
+      scheduleTime &&
+      scheduleTime.weekday === undefined
+    ) {
+      throw new AppError(
+        "VALIDATION_ERROR",
+        "A weekly schedule time needs a weekday",
+      );
+    }
+    return computeNextCheckAt(scheduleInterval, null, scheduleTime);
+  }
+  if (scheduleTime) {
+    throw new AppError(
+      "VALIDATION_ERROR",
+      "A schedule time needs a daily, weekly, or monthly schedule",
+    );
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +265,7 @@ async function triggerCheck(input: {
 
   if (input.maxCostCredits != null) {
     const { costCredits } = estimateRankCheckCredits(
-      keywords.length,
+      keywords.map((kw) => kw.keyword),
       config.devices,
       config.serpDepth,
       "live",
@@ -226,6 +294,39 @@ async function triggerCheck(input: {
     trigger: "manual",
     workflowStartErrorMessage: "Failed to start rank check workflow",
   });
+}
+
+// A scheduled check this close covers the same keywords, so an automatic
+// check now would bill the customer twice within the hour.
+const AUTO_CHECK_SCHEDULE_WINDOW_MS = 60 * 60_000;
+
+// The check that follows adding a domain or keywords, as opposed to the user
+// pressing "Check Now" — so it yields to an imminent scheduled check.
+async function triggerAutoCheck(input: {
+  configId: string;
+  projectId: string;
+  billingCustomer: BillingCustomerContext;
+  keywordIds?: string[];
+}): Promise<
+  | RankCheckTriggerResult
+  | { ok: false; reason: "scheduled_soon" | "no_keywords" }
+> {
+  const config = await getValidatedConfig(input.configId, input.projectId);
+  const msUntilScheduled = config.nextCheckAt
+    ? new Date(config.nextCheckAt).getTime() - Date.now()
+    : Infinity;
+  if (msUntilScheduled <= AUTO_CHECK_SCHEDULE_WINDOW_MS) {
+    // A free plan must not be told to wait for a scheduled check that the
+    // scheduler will skip. The other path checks access in triggerCheck.
+    await requireRankCheckAccess(input.billingCustomer.organizationId);
+    return { ok: false, reason: "scheduled_soon" };
+  }
+  // A brand-new domain has no keywords yet; a re-added archived one keeps its.
+  const counts = await RankTrackingRepository.getKeywordCountsForConfigs([
+    config.id,
+  ]);
+  if (!counts.get(config.id)) return { ok: false, reason: "no_keywords" };
+  return triggerCheck(input);
 }
 
 async function getLatestRun(configId: string, projectId: string) {
@@ -265,7 +366,11 @@ async function refreshKeywordMetrics(
 
   const client = createDataforseoClient(billingCustomer);
   const metrics = await fetchKeywordMetricsForList(client, {
-    keywords: keywords.map((kw) => kw.keyword),
+    // The keyword-data APIs are case-insensitive and echo keywords back
+    // lowercased, so ask in lowercase. A match-case keyword can sit next to
+    // its lowercase twin; both then map to the same metrics row and the
+    // request carries no duplicates.
+    keywords: [...new Set(keywords.map((kw) => kw.keyword.toLowerCase()))],
     locationCode: config.locationCode,
     // Trackers can pair any SERP language with any country; the keyword-data
     // APIs only serve the country's own languages.
@@ -385,6 +490,7 @@ export const RankTrackingService = {
   addKeywords: RankTrackingKeywordService.addKeywords,
   removeKeywords: RankTrackingKeywordService.removeKeywords,
   triggerCheck,
+  triggerAutoCheck,
   getLatestRun,
   estimateCost: RankTrackingKeywordService.estimateCost,
   refreshKeywordMetrics,

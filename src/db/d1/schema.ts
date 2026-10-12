@@ -2,6 +2,9 @@
 // which is the provider-aware barrel) so the D1 client always binds to the
 // SQLite tables regardless of DATABASE_PROVIDER.
 export * from "../app.schema";
+export * from "../project-context.schema";
+export * from "../reports.schema";
+export * from "../report-templates.schema";
 export * from "../audit.schema";
 export * from "../sam.schema";
 export * from "../better-auth-schema";
@@ -11,3 +14,4 @@ export * from "../gsc.schema";
 export * from "../indexnow.schema";
 export * from "../bing.schema";
 export * from "../telemetry.schema";
+export * from "../ai-visibility.schema";

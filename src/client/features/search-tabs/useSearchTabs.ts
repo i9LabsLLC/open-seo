@@ -1,4 +1,13 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { z } from "zod";
+import {
+  researchScopeSchema,
+  type ResearchScope,
+} from "@/shared/researchScope";
+import {
+  promptExplorerModelSchema,
+  webSearchCountrySelectionSchema,
+} from "@/types/schemas/ai-search";
 import type { SearchTab, SearchTabInput } from "./types";
 
 type TabsState = {
@@ -20,25 +29,41 @@ const CHANGE_EVENT = "search-tabs-change";
 const stateCache = new Map<string, TabsState>();
 const SEARCH_TABS_LIMIT = 20;
 
+const promptTabInputSchema = z.object({
+  type: z.literal("prompt"),
+  prompt: z.string().min(1),
+  highlightBrand: z.string(),
+  models: z.array(promptExplorerModelSchema).min(1),
+  webSearch: z.boolean(),
+  webSearchCountryCode: webSearchCountrySelectionSchema,
+});
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function toResearchScope(value: unknown): ResearchScope | null {
+  const parsed = researchScopeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function parseTabInput(value: unknown): SearchTabInput | null {
   if (!isRecord(value)) return null;
   if (value.type === "backlinks") {
     if (typeof value.target !== "string" || value.target === "") return null;
-    if (value.scope !== "domain" && value.scope !== "page") return null;
+    // Legacy backlinks tabs stored "page"; "domain" survives as a valid scope.
+    const scope =
+      value.scope === "page" ? "exact_url" : toResearchScope(value.scope);
+    if (!scope) return null;
     return {
       type: "backlinks",
       target: value.target,
-      scope: value.scope,
+      scope,
     };
   }
 
   if (value.type === "domain") {
     if (typeof value.domain !== "string" || value.domain === "") return null;
-    if (typeof value.subdomains !== "boolean") return null;
     // locationCode is optional in DomainSearchTabInput: tabs opened at the
     // default location persist no loc param, so accept a missing key.
     if (
@@ -47,10 +72,19 @@ function parseTabInput(value: unknown): SearchTabInput | null {
     ) {
       return null;
     }
+    // Legacy tabs stored an "include subdomains" boolean instead of a scope.
+    const scope =
+      toResearchScope(value.scope) ??
+      (typeof value.subdomains === "boolean"
+        ? value.subdomains
+          ? "subdomains"
+          : "domain"
+        : null);
+    if (!scope) return null;
     return {
       type: "domain",
       domain: value.domain,
-      subdomains: value.subdomains,
+      scope,
       locationCode:
         typeof value.locationCode === "number" ? value.locationCode : undefined,
     };
@@ -86,11 +120,19 @@ function parseTabInput(value: unknown): SearchTabInput | null {
       keyword: value.keyword,
       locationCode:
         typeof value.locationCode === "number" ? value.locationCode : undefined,
+      locationName:
+        typeof value.locationName === "string" ? value.locationName : undefined,
       resultLimit: value.resultLimit,
       mode: value.mode,
       // Tabs persisted before the clickstream toggle existed default to off.
       clickstream: value.clickstream === true,
+      // Tabs persisted before per-search grouping existed default to off.
+      groupKeywords: value.groupKeywords === true,
     };
+  }
+
+  if (value.type === "prompt") {
+    return promptTabInputSchema.safeParse(value).data ?? null;
   }
 
   return null;

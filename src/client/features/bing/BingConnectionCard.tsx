@@ -2,7 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
-import { IntegrationConnectionCard } from "@/client/features/integrations/IntegrationConnectionCard";
+import { IntegrationConnectionCard } from "@/client/features/bing/IntegrationConnectionCard";
 import {
   disconnectBing,
   getBingConnection,

@@ -13,6 +13,7 @@ import {
   type McpTableColumn,
 } from "@/server/mcp/table";
 import { projectIdSchema } from "@/server/mcp/schemas";
+import { googleSerpUrl } from "@/shared/google-serp-url";
 
 const RANK_RESULT_COLUMNS: McpTableColumn<unknown>[] = [
   { header: "keyword", value: (row) => readPath(row, "keyword") },
@@ -26,7 +27,33 @@ const RANK_RESULT_COLUMNS: McpTableColumn<unknown>[] = [
     header: "prev (mobile)",
     value: (row) => readPath(row, "mobile", "previousPosition"),
   },
+  {
+    header: "pinned",
+    value: (row) => (readPath(row, "pinned") === true ? "yes" : "no"),
+  },
+  { header: "google serp", value: (row) => readPath(row, "googleSerpUrl") },
 ];
+
+/**
+ * `lastCheckedAt` comes from the newest snapshot, so a run that finished
+ * without saving any (e.g. every keyword errored) would otherwise read
+ * "never". Report the run's own state instead.
+ */
+function formatLatestRun(
+  run: {
+    status: "pending" | "running" | "completed" | "failed";
+    completedAt: string | null;
+    lastCheckedAt: string | null;
+    errorMessage: string | null;
+  } | null,
+): string {
+  if (!run) return "Latest run: never";
+  if (run.status === "failed")
+    return `Latest run: failed — ${run.errorMessage ?? "Unknown error"}`;
+  if (run.status === "completed")
+    return `Latest run: ${run.completedAt ?? run.lastCheckedAt ?? "completed"}`;
+  return `Latest run: ${run.status}`;
+}
 
 const inputSchema = {
   projectId: projectIdSchema,
@@ -46,7 +73,7 @@ export const getRankTrackerTool = {
   config: {
     title: "Get rank tracker",
     description:
-      "Read-only access to rank tracker configs and their latest results. With `trackerId`, returns config + latest snapshot per keyword, including `trackingKeywordId` for removals. Without it, lists all trackers in the project. Uses no credits. Use create_rank_tracker when no tracker exists; then use add_rank_tracking_keywords, remove_rank_tracking_keywords, estimate_rank_tracker_cost, or run_rank_tracker to manage it. `lastCheckedAt` shows position freshness.",
+      "Read-only access to rank tracker configs and their latest results. With `trackerId`, returns config + latest snapshot per keyword, including `trackingKeywordId` for removals and pins, `pinned` (pinned keywords are listed first), and `googleSerpUrl`, a live Google search for the tracked keyword, language, country, and city. Without it, lists all trackers in the project. Uses no credits. Use create_rank_tracker when no tracker exists; then use add_rank_tracking_keywords, remove_rank_tracking_keywords, pin_rank_tracking_keywords, estimate_rank_tracker_cost, or run_rank_tracker to manage it. `lastCheckedAt` shows position freshness.",
     inputSchema,
     outputSchema: z
       .object({
@@ -59,9 +86,13 @@ export const getRankTrackerTool = {
               .object({
                 id: z.string(),
                 lastCheckedAt: z.string().nullable(),
+                completedAt: z.string().nullable(),
                 status: z.enum(["pending", "running", "completed", "failed"]),
                 errorMessage: z.string().nullable(),
               })
+              // Cached client schemas must tolerate new run fields too;
+              // passthrough on the parent results object is not recursive.
+              .passthrough()
               .nullable(),
           })
           .passthrough()
@@ -85,7 +116,7 @@ export const getRankTrackerTool = {
             configs
               .map(
                 (c) =>
-                  `- ${c.id}  ${c.domain}  loc:${c.locationCode}  schedule:${c.scheduleInterval}`,
+                  `- ${c.id}  ${c.domain}  loc:${c.locationCode}${c.locationName ? `  location:"${c.locationName}"` : ""}  schedule:${c.scheduleInterval}`,
               )
               .join("\n");
       return mcpResponse({
@@ -103,20 +134,24 @@ export const getRankTrackerTool = {
       args.trackerId,
       args.projectId,
     );
+    const allRows = results.rows.map((row) => ({
+      ...row,
+      googleSerpUrl: googleSerpUrl(row.keyword, config),
+    }));
+    // Pinned keywords first, as in the app's keyword table.
+    const rows = [
+      ...allRows.filter((row) => row.pinned),
+      ...allRows.filter((row) => !row.pinned),
+    ];
     const text = [
-      `Tracker ${config.id} (${config.domain}):`,
+      `Tracker ${config.id} (${config.domain}${config.locationName ? `, ${config.locationName}` : ""}):`,
       `Schedule: ${config.scheduleInterval}, devices: ${config.devices}, depth: ${config.serpDepth}`,
-      `Latest run: ${results.run?.lastCheckedAt ?? "never"}`,
-      results.run?.status === "failed"
-        ? `Latest run failed: ${results.run.errorMessage ?? "Unknown error"}`
-        : null,
+      formatLatestRun(results.run),
       `Keywords (${results.rows.length}):`,
       results.rows.length === 0
         ? "No keywords tracked yet."
-        : formatMcpTable(results.rows, RANK_RESULT_COLUMNS),
-    ]
-      .filter((line): line is string => line !== null)
-      .join("\n");
+        : formatMcpTable(rows, RANK_RESULT_COLUMNS),
+    ].join("\n");
     return mcpResponse({
       text,
       meta: buildProjectMeta(
@@ -124,7 +159,7 @@ export const getRankTrackerTool = {
         args.projectId,
         `/p/${args.projectId}/rank-tracking/${args.trackerId}`,
       ),
-      structuredContent: { config, results },
+      structuredContent: { config, results: { ...results, rows } },
     });
   }),
 };

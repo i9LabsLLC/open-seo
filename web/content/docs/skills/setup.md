@@ -5,6 +5,8 @@ description: "Add OpenSEO skill files to your AI agent after connecting OpenSEO 
 
 OpenSEO Agent Skills are separate files from OpenSEO MCP.
 
+On Claude Code, skip the steps below and use the [OpenSEO plugin](/docs/claude-code-plugin) instead — it installs MCP and every skill in one step. On Codex CLI, use the [OpenSEO plugin](/docs/codex-plugin) the same way.
+
 First, [set up OpenSEO MCP](/docs/mcp). MCP gives your agent access to OpenSEO data.
 
 Then add the OpenSEO `SKILL.md` files you want your agent to use. Each skill gives your agent one SEO workflow.
@@ -54,11 +56,11 @@ git clone https://github.com/every-app/open-seo.git
 
 # Codex
 mkdir -p ~/.codex/skills
-cp -R open-seo/.agents/skills/* ~/.codex/skills/
+cp -R open-seo/plugins/openseo/skills/* ~/.codex/skills/
 
 # Claude Code
 mkdir -p ~/.claude/skills
-cp -R open-seo/.agents/skills/* ~/.claude/skills/
+cp -R open-seo/plugins/openseo/skills/* ~/.claude/skills/
 ```
 
 You can also review the source skills on GitHub:
@@ -66,6 +68,10 @@ You can also review the source skills on GitHub:
 - [OpenSEO Agent Skills on GitHub](https://github.com/every-app/open-seo/tree/main/.agents/skills)
 
 Each skill page also links to its source `SKILL.md`.
+
+## Update installed skills
+
+Use the [update prompt or commands for your installation method](/docs/agent-setup#update-your-skills). Update the OpenSEO plugin if it supplies your skills; otherwise use the installer you originally chose or update your manual copies.
 
 ## Run a skill
 
@@ -78,6 +84,8 @@ After the skill files are available to your agent, run the matching slash comman
 - `/competitive-landscape`
 - `/competitor-analysis`
 - `/link-prospecting`
+- `/local-seo`
+- `/seo-audit`
 
 ## Next step
 

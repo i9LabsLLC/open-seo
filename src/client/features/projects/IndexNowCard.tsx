@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
-import { CopyButton } from "@/client/features/ai-mcp/SetupControls";
+import { CopyButton } from "@/client/components/CopyButton";
 import { getStandardErrorMessage } from "@/client/lib/error-messages";
 import {
   generateIndexNowKey,

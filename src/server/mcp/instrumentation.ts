@@ -1,7 +1,7 @@
 import { waitUntil } from "cloudflare:workers";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { z } from "zod";
-import { asAppError } from "@/server/lib/errors";
+import { AppError, asAppError } from "@/server/lib/errors";
 import { recordExternalMcpToolCall } from "@/server/features/activation/mcpActivation";
 import { captureServerError, captureServerEvent } from "@/server/lib/posthog";
 import { shouldCaptureAppErrorCode } from "@/shared/error-codes";
@@ -56,6 +56,7 @@ function captureMcpToolCall(
         error_code: outcome.errorCode,
         client_id: auth.clientId,
         source: auth.clientId ? "mcp_client" : "in_app_agent",
+        turn_id: context.turnId,
         duration_ms: outcome.durationMs,
         project_id: outcome.projectId,
         row_count: outcome.rowCount,
@@ -106,6 +107,7 @@ export function instrumentMcpToolHandler<TArgs>(
                 tool: toolName,
                 issues: formatValidationIssues(validation.error),
               },
+              context.auth.userId,
             ),
           );
         }
@@ -183,13 +185,31 @@ export function instrumentMcpToolHandler<TArgs>(
       if (shouldCaptureAppErrorCode(appError?.code)) {
         console.error(`mcp.tool error (${toolName}):`, error);
         waitUntil(
-          captureServerError(error, {
-            errorCode: appError?.code ?? "INTERNAL_ERROR",
-            tool: toolName,
-          }),
+          captureServerError(
+            error,
+            {
+              errorCode: appError?.code ?? "INTERNAL_ERROR",
+              tool: toolName,
+            },
+            context.auth.userId,
+          ),
         );
       }
-      throw error;
+      throw agentFacingError(error, appError);
     }
   };
+}
+
+// The agent sees only the error message, and a bare INSUFFICIENT_CREDITS code
+// gives it nothing to tell the user, so it tends to retry. Explain it instead,
+// without promoting upgrades or purchases (the server instructions forbid
+// that); every other error passes through unchanged.
+function agentFacingError(error: unknown, appError: AppError | null): unknown {
+  if (appError?.code !== "INSUFFICIENT_CREDITS") return error;
+  const detail =
+    appError.message === appError.code ? "" : `${appError.message} `;
+  return new AppError(
+    "INSUFFICIENT_CREDITS",
+    `${detail}This OpenSEO organization doesn't have enough credits for this request. Retrying won't help until the organization has more credits.`,
+  );
 }

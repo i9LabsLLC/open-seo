@@ -17,11 +17,11 @@ export const getBingVisibilityTool = {
     description:
       "Return Bing Webmaster rank and traffic stats (impressions, clicks, average position) for the project's connected Bing property. Uses no DataForSEO credits. Bing's index feeds Copilot and ChatGPT search, so this is the closest read on how visible a site is in those answers. Requires Bing Webmaster to be connected in project settings.",
     inputSchema: { projectId: projectIdSchema },
-    outputSchema: {
+    outputSchema: z.looseObject({
       siteUrl: z.string(),
       visibility: z.union([passthroughRows, z.record(z.string(), z.unknown())]),
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       readOnlyHint: true,
       openWorldHint: true,
@@ -51,12 +51,12 @@ export const getBingCrawlIssuesTool = {
     description:
       "Return the crawl problems Bing Webmaster reports for the project's connected property — pages it could not fetch, index, or render. Uses no DataForSEO credits. Pair with submit_urls_indexnow after fixing an issue to get the page re-crawled quickly. Requires Bing Webmaster to be connected in project settings.",
     inputSchema: { projectId: projectIdSchema },
-    outputSchema: {
+    outputSchema: z.looseObject({
       siteUrl: z.string(),
       issueCount: z.number(),
       issues: passthroughRows,
       ...optionalMetaOutputSchema,
-    },
+    }),
     annotations: {
       readOnlyHint: true,
       openWorldHint: true,
