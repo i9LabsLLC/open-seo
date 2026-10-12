@@ -53,5 +53,7 @@ jobs:
           test -f .env || touch .env
           printf 'OPEN_SEO_IMAGE=%s\nOPENSEO_ALLOWED_HOST=%s\n' "$1" "$2" > image.env
           docker compose --env-file .env --env-file image.env -p openseo up -d --wait --wait-timeout 1200
-          curl --fail --silent http://127.0.0.1:3001/api/health
+          # The port is published on OPENSEO_BIND_IP (.env), default 127.0.0.1.
+          bind_ip=$(sed -n 's/^OPENSEO_BIND_IP=//p' .env | tail -1)
+          curl --fail --silent --show-error "http://${bind_ip:-127.0.0.1}:3001/api/health" >/dev/null
           REMOTE
