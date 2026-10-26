@@ -1,6 +1,10 @@
 # Use the full Node image so workerd has a working CA trust store for outbound HTTPS.
 FROM node:22.23.4
 
+# CVE-2026-111497 (HTTP2Shell): the bookworm base ships libbrotli1 1.0.9-2+b6; pull the
+# DLA-4855-1 fix (1.0.9-2+deb12u1) until the upstream node image is rebuilt with it.
+RUN apt-get update && apt-get install -y --only-upgrade libbrotli1 && rm -rf /var/lib/apt/lists/*
+
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 
